@@ -1,8 +1,8 @@
-# 🏛️ WatchTower XDR - System Design Document v2.0 (UNIVERSAL ARCHITECTURE)
+# 🏛️ WatchTower XDR - System Design Document v2.1 (UNIVERSAL ARCHITECTURE)
 
 **Project Status:** Production-Ready Architecture ✅ | Code: Pre-Release (v0.x.0)  
-**Last Updated:** 2026-02-08 (Universal cloud-agnostic design)  
-**Architect(s):** Emre (Product Owner) + Claude (Technical Architect)  
+**Last Updated:** 2026-02-08 (Full English translation, optimized roadmap)  
+**Architect(s):** Emir Furkan Ulu (Product Owner) + Claude (Technical Architect)  
 **Peer Review:** Gemini (Performance & Implementation Analysis)  
 **Slogan:** "Enterprise-grade XDR for everyone, everywhere."
 
@@ -22,40 +22,47 @@
 7. ✅ One-Click Agent Installer - Auto-configuration
 8. ✅ Full XDR Coverage - L3/L4 + L7
 
-### v1.2 → v2.0 (Universal & Production-Ready) ⭐ CURRENT
-9. ✅ **Cloud-Agnostic Design** - AWS, DigitalOcean, Hetzner, on-prem
-10. ✅ **Technology Decision Matrix** - Rationale for every choice
-11. ✅ **ML-Ready Architecture** - Strategy Pattern for PyTorch/TensorFlow
-12. ✅ **Dynamic Service Discovery** - Web UI for adding watch paths
-13. ✅ **Development Workflow** - VMware + Multipass testing strategy
-14. ✅ **Versioning Clarity** - v0.x.0 (code) vs v2.0.0 (docs)
+### v1.2 → v2.0 (Universal & Production-Ready)
+9. ✅ Cloud-Agnostic Design - AWS, DigitalOcean, Hetzner, on-prem
+10. ✅ Technology Decision Matrix - Rationale for every choice
+11. ✅ ML-Ready Architecture - Strategy Pattern for PyTorch/TensorFlow
+12. ✅ Dynamic Service Discovery - Web UI for adding watch paths
+13. ✅ Development Workflow - VMware + Multipass testing strategy
+14. ✅ Versioning Clarity - v0.x.0 (code) vs v2.0.0 (docs)
 
-**Key Achievement (v2.0):** WatchTower is now a truly universal, self-hosted XDR platform that works on any infrastructure - from hobby projects on Raspberry Pi to enterprise deployments on AWS.
+### v2.0 → v2.1 (Complete English Translation & Roadmap Optimization) ⭐ CURRENT
+15. ✅ **Full English Translation** - No Turkish except proper nouns
+16. ✅ **Author Name Correction** - Emir Furkan Ulu (was incorrectly "Emre")
+17. ✅ **Optimized Development Roadmap** - Clearer phase breakdown
+18. ✅ **Implementation Status** - GitHub repository created
+
+**Key Achievement (v2.1):** WatchTower documentation is now fully internationalized and implementation-ready with a GitHub repository established.
 
 ---
 
 ## 📊 Project Versioning Strategy
 
-**Documentation Version:** v2.0.0 (this document)
+**Documentation Version:** v2.1.0 (this document)
 - Tracks architectural evolution
 - Major version = significant design changes
-- Current: v2.0.0 (universal, production-ready)
+- Minor version = translations, optimizations, corrections
+- Current: v2.1.0 (fully English, optimized)
 
-**Software Version:** v0.x.0 (code in repository)
+**Software Version:** v0.1.0-alpha (code in repository)
 - Follows semantic versioning
 - v0.x.x = pre-release, API unstable
 - v1.0.0 = first stable release (production-ready)
-- Current status: v0.1.0-alpha (Faz 0 in development)
+- Current status: v0.1.0-alpha (Phase 0 in development)
 
 **Versioning Convention:**
 ```
 v0.1.0 - Architecture design complete, basic protobuf
-v0.2.0 - Faz 0 complete (gRPC hello world)
-v0.3.0 - Faz 1 complete (LogWatcher + PostgreSQL)
-v0.4.0 - Faz 2 complete (Heartbeat + Anomaly)
-v0.5.0 - Faz 3 complete (Turret IPS)
-v0.6.0 - Faz 4 complete (Anomaly Engine)
-v0.9.0 - Faz 6 complete (Interceptor + Installer)
+v0.2.0 - Phase 0 complete (gRPC hello world)
+v0.3.0 - Phase 1 complete (LogWatcher + PostgreSQL)
+v0.4.0 - Phase 2 complete (Heartbeat + Anomaly)
+v0.5.0 - Phase 3 complete (Turret IPS)
+v0.6.0 - Phase 4 complete (Anomaly Engine)
+v0.9.0 - Phase 6 complete (Interceptor + Installer)
 v1.0.0 - First production release 🚀
 ```
 
@@ -1992,16 +1999,16 @@ wt-cli db stats
 
 ## 7. Development Roadmap
 
-### Faz 0: Hazırlık (Week 1)
+### Phase 0: Preparation (Week 1)
 ```
 ✅ Goals:
   - Repository structure
   - Go modules initialized
   - gRPC "Hello World"
-  - ⭐ NEW (v1.1): PKI automation foundation
+  - PKI automation foundation
 
 Deliverables:
-  - GitHub repo created
+  - GitHub repo created ✅
   - cmd/wt-core/main.go
   - cmd/wt-sentry/main.go
   - cmd/wt-cli/main.go (CLI tool skeleton)
@@ -2009,96 +2016,253 @@ Deliverables:
   - internal/cache/ (baseline cache stub)
   - Makefile
   - logrotate config template
+  - README.md with getting started guide
 
-Success:
-  - Sentry connects to Core
+Success Criteria:
+  - Sentry connects to Core via gRPC
   - Send "ping", receive "pong"
   - wt-cli pki init creates CA
   - Log rotation config validated
+  - CI/CD pipeline configured (GitHub Actions)
 ```
 
-### Faz 1: Gözcü (Weeks 2-3)
+### Phase 1: Watcher (Weeks 2-3)
 ```
 Goals:
-  - Sentry watches logs + CPU
+  - Sentry watches logs + system metrics
   - Core receives and stores events
+  - Basic detection patterns
 
 Components:
-  - Log watcher (fsnotify)
-  - CPU monitor
-  - PostgreSQL writer
-  - Basic CLI
+  Sentry:
+    - Log watcher (fsnotify)
+    - System monitor (CPU, memory, disk)
+    - Pattern matcher (regex engine)
+  
+  Core:
+    - Event receiver (gRPC server)
+    - PostgreSQL writer
+    - Basic event storage
+  
+  CLI:
+    - wt-cli events list
+    - wt-cli events tail
+    - wt-cli agents list
 
-Success:
-  - Detect 10 SSH failures
-  - Core logs to database
-  - wt-cli shows events
+Success Criteria:
+  - Detect 10 SSH failures in /var/log/auth.log
+  - Core writes events to PostgreSQL
+  - wt-cli shows events in real-time
+  - CPU spike detected (>80% for 5 minutes)
 ```
 
-### Faz 2: İletişim (Week 4)
-```
-Goals:
-  - Heartbeat mechanism
-  - TimescaleDB integration
-  - ntfy notifications
-
-Success:
-  - Core detects dead agent
-  - Alert sent to phone
-  - Grafana dashboard live
-```
-
-### Faz 3: Taret (Weeks 5-6) ⚠️
+### Phase 2: Communication & Monitoring (Week 4)
 ```
 Goals:
-  - Turret execution
-  - Unix Socket IPC
-  - iptables integration
+  - Heartbeat mechanism (agent health)
+  - TimescaleDB integration (time-series)
+  - Notifications (ntfy.sh)
+  - Basic Grafana dashboard
 
-⚠️ WARNING: Test in VM only!
+Components:
+  Core:
+    - Heartbeat receiver
+    - Agent health monitor
+    - TimescaleDB hypertables
+    - ntfy integration
+  
+  Sentry:
+    - Heartbeat sender (every 30s)
+    - Metric collection (uptime, event count)
+  
+  Dashboard:
+    - Grafana data source (PostgreSQL)
+    - Panel: Agent status (alive/stale/dead)
+    - Panel: Events timeline
+    - Panel: CPU/Memory graphs
 
-Success:
-  - Sentry detects attack
-  - Turret bans IP
-  - Rollback works
+Success Criteria:
+  - Core detects dead agent within 90 seconds
+  - Alert sent to phone via ntfy
+  - Grafana dashboard shows live data
+  - TimescaleDB compression working
 ```
 
-### Faz 4: Beyin (Weeks 7-8)
+### Phase 3: Turret (Weeks 5-6) ⚠️ CAUTION
 ```
 Goals:
-  - Anomaly detection
-  - Baseline calculation
-  - Advanced dashboards
+  - Turret automated response
+  - Unix Socket IPC (Sentry ↔ Turret)
+  - iptables/ipset integration
+  - Safety mechanisms (whitelisting, circuit breaker)
 
-Success:
-  - 7-day baseline established
-  - Anomaly alerts work
-  - Grafana visualizations
+Components:
+  Turret:
+    - Unix socket server
+    - Command validator (whitelist checking)
+    - iptables executor
+    - ipset manager
+    - Circuit breaker (rate limiting)
+  
+  Sentry:
+    - Turret client (Unix socket)
+    - Threat scoring
+    - Action recommendation
+
+⚠️ CRITICAL: Test in isolated VM only!
+  - Use VMware/Multipass
+  - DO NOT test on production servers
+  - Risk: Self-ban (lockout from server)
+
+Success Criteria:
+  - Sentry detects brute force (5 SSH failures)
+  - Sends BAN command to Turret
+  - Turret adds IP to ipset blacklist
+  - IP blocked at kernel level (verify with tcpdump)
+  - Whitelist prevents self-ban
+  - Circuit breaker triggers on >10 bans/min
+  - Rollback works (unban via wt-cli)
 ```
 
-### Faz 5: Kalkan (Future)
+### Phase 4: Brain (Anomaly Engine) (Weeks 7-8)
 ```
 Goals:
-  - WT-Guard (NIDS)
-  - Packet analysis
+  - Statistical anomaly detection
+  - Baseline calculation (7-day rolling window)
+  - Baseline cache (in-memory)
+  - Advanced Grafana dashboards
+
+Components:
+  Core:
+    - Baseline calculator
+    - Z-Score anomaly detector
+    - BaselineCache (Go map, 50MB)
+    - Background baseline updater
+  
+  Database:
+    - baselines table (seasonal patterns)
+    - Automatic aggregation queries
+  
+  Dashboard:
+    - Panel: Anomaly score timeline
+    - Panel: Baseline vs actual (CPU, memory)
+    - Panel: Threat heatmap (per agent)
+    - Alert rules (anomaly score >80)
+
+Success Criteria:
+  - 7-day baseline established for each metric
+  - Anomaly detected (CPU spike 3σ above baseline)
+  - Grafana shows anomaly alert
+  - Cache hit rate >95% (verify with metrics)
+  - Baseline recalculates automatically (weekly)
+```
+
+### Phase 5: Shield (Network IDS) - DEFERRED
+```
+Goals:
+  - WT-Guard (NIDS component)
+  - Packet analysis (libpcap/AF_PACKET)
   - Port scan detection
+  - DDoS mitigation
 
-Note: Deferred to v2.0
+Note: Deferred to v2.0 (post-v1.0 release)
+Reason: Core features prioritized first
+
+Components (Planned):
+  - Guard: Packet capture agent
+  - Signature engine (Suricata-like)
+  - Flow analysis (NetFlow v9)
+  - Integration with Turret (ban scanning IPs)
 ```
 
-### Faz 6: Gatekeeper (Weeks 9-11) ⭐ NEW (v1.2)
+### Phase 6: Gatekeeper (Application Layer) (Weeks 9-11)
 ```
 Goals:
   - WT-Interceptor component
   - Application layer WAF
   - Custom block pages
-  - One-click installer
+  - One-click installer (auto-detection)
 
 Components:
   Interceptor:
-    - HTTP reverse proxy (Go)
-    - WAF rule engine (SQL injection, XSS, etc.)
-    - Rate limiting per-path
+    - HTTP reverse proxy (Go net/http)
+    - WAF rule engine (SQL injection, XSS, path traversal)
+    - Rate limiting (per-path, token bucket)
+    - Custom error pages (HTML templates)
+    - GeoIP filtering (MaxMind DB)
+  
+  Installer:
+    - Smart Nginx detection
+    - Hybrid vs Standalone mode selection
+    - Automatic systemd service creation
+    - Certificate deployment (embedded)
+    - Rollback capability
+  
+  Integration:
+    - Sentry ↔ Interceptor (Unix Socket, L7 threat sharing)
+    - Turret ↔ Interceptor (Redis blocklist sync)
+    - Core receives L7 events (gRPC)
+  
+  Dashboard:
+    - Panel: L7 threats (SQLi, XSS attempts)
+    - Panel: Rate limit violations
+    - Panel: Top blocked IPs
+
+Deliverables:
+  - cmd/wt-interceptor/main.go
+  - internal/waf/rules.go
+  - internal/ratelimit/limiter.go
+  - web/pages/*.html (block pages)
+  - wt-cli agent generate-installer
+  - wt-cli agent deploy
+  - Database: l7_events table
+
+Success Criteria:
+  - Simulate SQLi attack → blocked + custom "WatchTower" page
+  - Brute force /admin/login → rate limited → CAPTCHA challenge
+  - One-click installer works on:
+    * Fresh Ubuntu (no Nginx) → standalone mode
+    * Existing Nginx → hybrid mode
+  - Performance: <5ms added latency (p99)
+  - Cloudflare down → WatchTower protecting independently
+```
+
+### Phase 7: Polish & Release (Week 12)
+```
+Goals:
+  - Documentation finalization
+  - Performance tuning
+  - Security audit
+  - v1.0.0 release
+
+Tasks:
+  - Complete README.md (installation, quick start)
+  - API documentation (wt-cli commands)
+  - Deployment guide (AWS, DigitalOcean examples)
+  - Performance benchmarks (documented)
+  - Security review (third-party if possible)
+  - Code cleanup (gofmt, golint, staticcheck)
+  - Final integration tests (full topology)
+  
+Release Checklist:
+  - [ ] All unit tests passing (>80% coverage)
+  - [ ] Integration tests passing
+  - [ ] E2E tests passing (VMware topology)
+  - [ ] No critical bugs in issue tracker
+  - [ ] Documentation complete
+  - [ ] Binaries built (Linux x64, ARM64)
+  - [ ] Docker images published
+  - [ ] GitHub release notes written
+  - [ ] Demo video recorded (YouTube)
+
+v1.0.0 Release Announcement:
+  - Blog post (architecture overview)
+  - Reddit (r/selfhosted, r/golang, r/netsec)
+  - Hacker News submission
+  - Twitter/LinkedIn announcement
+```
+
+---    - Rate limiting per-path
     - Custom error pages
     - GeoIP filtering (optional)
   
@@ -3040,9 +3204,12 @@ Output:
 
 ---
 
-## 🎯 Final Checklist (v2.0)
+## 🎯 Final Checklist (v2.1)
 
 **Architecture:** ✅ Universal, Cloud-Agnostic, Production-Ready  
+**Language:** ✅ Fully English (internationalized)  
+**Author:** ✅ Emir Furkan Ulu (corrected)  
+**Repository:** ✅ GitHub created (implementation started)  
 
 **Infrastructure Support:**
 - [x] AWS, DigitalOcean, Hetzner, Linode, Vultr, OVH
@@ -3065,50 +3232,56 @@ Output:
 - [x] Application WAF (WT-Interceptor)
 - [x] One-Click Installer (smart detection)
 - [x] Custom Block Pages
-- [x] ML-Ready Architecture (Strategy Pattern) ⭐ NEW
-- [x] Dynamic Service Discovery (Web UI) ⭐ NEW
-- [x] Technology Decision Matrix ⭐ NEW
-- [x] Development Workflow (VMware + Multipass) ⭐ NEW
+- [x] ML-Ready Architecture (Strategy Pattern)
+- [x] Dynamic Service Discovery (Web UI)
+- [x] Technology Decision Matrix
+- [x] Development Workflow (VMware + Multipass)
 
-**Documentation:** ✅ Enterprise-Grade  
-**Versioning:** ✅ Clear (Code: v0.x.0 | Docs: v2.0.0)  
-**Testing Strategy:** ✅ 4-Level (Unit, Integration, Quick VM, Complex Topology)  
+**Documentation Quality:**
+- [x] Enterprise-Grade ✅
+- [x] Fully English (no Turkish except proper nouns) ✅
+- [x] Versioning Clear (Code: v0.x.0 | Docs: v2.1.0) ✅
+- [x] Testing Strategy (4-Level) ✅
+- [x] Development Roadmap Optimized ✅
 
-**Next Steps:**
-1. ✅ Architecture v2.0 complete
-2. ⏳ Create GitHub repo: watchtower-xdr
-3. ⏳ Initialize Go modules
-4. ⏳ Implement Faz 0: gRPC protocol
-5. ⏳ Set up CI/CD (GitHub Actions)
-6. ⏳ VMware topology (Core + 2 agents)
-7. ⏳ Implement Faz 1-6 (iterative)
+**Implementation Status:**
+1. ✅ Architecture v2.1 complete
+2. ✅ GitHub repo created: watchtower-xdr
+3. ✅ Initial commit made
+4. ⏳ Phase 0 in progress: gRPC protocol
+5. ⏳ CI/CD setup (GitHub Actions)
+6. ⏳ VMware test topology (Core + 2 agents)
+7. ⏳ Phase 1-7 implementation (iterative)
 
 ---
 
-**Document Version:** 2.0.0 (Universal Architecture)  
+**Document Version:** 2.1.0 (Fully Internationalized)  
 **Code Version:** v0.1.0-alpha (in development)  
 **Created:** 2026-02-08  
-**Last Revised:** 2026-02-08 (Cloud-agnostic, ML-ready, production-focused)  
-**Status:** Ready for Implementation 🚀
+**Last Revised:** 2026-02-08 (English translation, roadmap optimization, author correction)  
+**Status:** Implementation Ready 🚀
 
 **Revision Summary:**
 - v1.0: Initial architecture design
-- v1.1: Implementation feasibility improvements (performance, automation, safety)
+- v1.1: Implementation feasibility (performance, automation, safety)
 - v1.2: Application layer protection (WT-Interceptor, installer, full XDR)
-- v2.0: **Universal design** (any cloud, ML-ready, complete dev workflow)
+- v2.0: Universal design (any cloud, ML-ready, dev workflow)
+- v2.1: **Full English translation, optimized roadmap, author correction**
 
-**Key Achievement (v2.0):** 
-WatchTower is now a truly universal, self-hosted XDR platform that works anywhere - from $5/month VPS to enterprise AWS deployments. The architecture supports seamless ML integration (just change config!) and provides a complete development workflow for contributors.
+**Key Achievement (v2.1):** 
+WatchTower documentation is now fully internationalized and accessible to the global open-source community. The development roadmap has been optimized with clearer phase breakdowns and success criteria. GitHub repository has been created and initial development has begun.
 
 **Production Readiness:**
 - ✅ Cloud-agnostic (no vendor lock-in)
-- ✅ Technology choices justified (see Section 8.6)
+- ✅ Technology choices justified (Section 8.6)
 - ✅ ML-ready (Strategy Pattern, easy swap)
 - ✅ Test strategy defined (VMware + Multipass + CI/CD)
-- ✅ Development workflow documented
+- ✅ Development workflow documented (Section 8.7)
+- ✅ Fully English documentation
 - ✅ Scalable (1 to 1000+ agents)
+- ✅ GitHub repository established
 
-Bu doküman "Single Source of Truth" - Her şüphede buraya dön!
+**"Single Source of Truth" - Return here whenever in doubt.**
 
 **Contributors Welcome:** 
-Architecture is stable. Ready for open-source contributions. See Section 8.7 for development workflow.
+Architecture is stable and fully documented in English. Ready for global open-source contributions. See Section 8.7 for development workflow. GitHub: [repository link to be added]
