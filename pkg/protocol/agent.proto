@@ -15,7 +15,7 @@ package watchtower.agent.v1;
 
 // Go package path for generated code.
 // The semicolon separates the import path from the package name.
-option go_package = "github.com/[YOUR_ORG]/watchtower/pkg/protocol;agentpb";
+option go_package = "github.com/EForce11/WatchTower/pkg/protocol;protocol";
 
 import "google/protobuf/timestamp.proto";
 
