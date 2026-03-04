@@ -1,0 +1,88 @@
+// WatchTower XDR - Agent Protocol Definition
+// Phase: Faz 0.1 (gRPC Protocol Definition)
+// Version: v0.1.0-alpha
+//
+// This file defines the gRPC contract between WT-Sentry/Interceptor agents
+// and WT-Core (The Brain). All agent-to-core communication flows through
+// this service over mTLS (port 50051).
+//
+// Usage:
+//   protoc --go_out=. --go-grpc_out=. pkg/protocol/agent.proto
+
+syntax = "proto3";
+
+package watchtower.agent.v1;
+
+// Go package path for generated code.
+// The semicolon separates the import path from the package name.
+option go_package = "github.com/[YOUR_ORG]/watchtower/pkg/protocol;agentpb";
+
+import "google/protobuf/timestamp.proto";
+
+// ─────────────────────────────────────────────
+//  AgentService
+//  The primary RPC service exposed by WT-Core.
+//  Agents connect to Core (not the other way around).
+// ─────────────────────────────────────────────
+service AgentService {
+  // Heartbeat is called by each agent every 30 seconds.
+  // Core uses this to confirm the agent is alive and to push
+  // any pending configuration updates back to the agent.
+  //
+  // Timeout: 10s (agents treat no-response as a connection failure)
+  // Rate limit: 1 call / 30s per agent (enforced server-side)
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+// ─────────────────────────────────────────────
+//  HeartbeatRequest
+//  Sent by the agent to Core every 30 seconds.
+// ─────────────────────────────────────────────
+message HeartbeatRequest {
+  // agent_id is the unique identifier assigned to this agent during
+  // registration. Format: UUID v4 (e.g. "550e8400-e29b-41d4-a716-446655440000").
+  // This field is mandatory; Core will reject requests with an empty agent_id.
+  string agent_id = 1;
+
+  // timestamp is the agent's local wall-clock time at the moment the
+  // heartbeat is sent. Core stores this in the `agents.last_seen` column
+  // and uses it to detect stale agents (timeout: 90 s).
+  // Agents MUST populate this field.
+  google.protobuf.Timestamp timestamp = 2;
+}
+
+// ─────────────────────────────────────────────
+//  HeartbeatResponse
+//  Returned by Core to the agent after a successful heartbeat.
+// ─────────────────────────────────────────────
+message HeartbeatResponse {
+  // status indicates the health / operational state acknowledged by Core.
+  // Agents should log any status other than AGENT_STATUS_OK and alert
+  // the operator if the state persists.
+  AgentStatus status = 1;
+}
+
+// ─────────────────────────────────────────────
+//  AgentStatus
+//  Enumerates the operational states Core can report back to an agent.
+// ─────────────────────────────────────────────
+enum AgentStatus {
+  // Default zero value; should never be used intentionally.
+  // Treat as an error if received.
+  AGENT_STATUS_UNSPECIFIED = 0;
+
+  // Agent is healthy and operating normally.
+  AGENT_STATUS_OK = 1;
+
+  // Core has a new configuration version for this agent.
+  // The agent should call the (future) ConfigFetch RPC to retrieve it.
+  AGENT_STATUS_CONFIG_UPDATE_PENDING = 2;
+
+  // The agent's mTLS certificate is nearing expiry (< 7 days remaining).
+  // The agent should trigger certificate renewal immediately.
+  AGENT_STATUS_CERT_RENEWAL_REQUIRED = 3;
+
+  // Agent has been administratively disabled by an operator.
+  // The agent should stop all monitoring activity and wait for re-enablement.
+  AGENT_STATUS_DISABLED = 4;
+}
