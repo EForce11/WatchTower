@@ -3,6 +3,7 @@ module github.com/EForce11/WatchTower
 go 1.24.0
 
 require (
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/golang/protobuf v1.5.4
 	google.golang.org/grpc v1.79.2
 	google.golang.org/protobuf v1.36.11
