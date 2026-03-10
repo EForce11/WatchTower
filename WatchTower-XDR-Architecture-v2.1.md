@@ -2,8 +2,7 @@
 
 **Project Status:** Production-Ready Architecture ✅ | Code: Pre-Release (v0.x.0)  
 **Last Updated:** 2026-02-08 (Full English translation, optimized roadmap)  
-**Architect(s):** Emir Furkan Ulu (Product Owner) + Claude (Technical Architect)  
-**Peer Review:** Gemini (Performance & Implementation Analysis)  
+**Architect & Developer:** Emir Furkan Ulu 
 **Slogan:** "Enterprise-grade XDR for everyone, everywhere."
 
 ---
