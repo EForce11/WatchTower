@@ -31,3 +31,7 @@ go.work.sum
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# test files
+wt-core 
+wt-sentry
