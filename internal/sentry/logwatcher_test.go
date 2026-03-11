@@ -169,3 +169,12 @@ func TestLogWatcher_ContextCancellation(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	// No assertion needed; just confirm no panic / deadlock.
 }
+
+// TestLogWatcher_ErrorCases verifies error handling in NewLogWatcher
+func TestLogWatcher_ErrorCases(t *testing.T) {
+	// Pass a non-existent file
+	_, err := NewLogWatcher([]string{"/this/path/does/not/exist/surely.log"})
+	if err == nil {
+		t.Error("Expected error when trying to watch a non-existent file")
+	}
+}
