@@ -1,0 +1,37 @@
+# .github/labeler.yml
+# Used by the `pr-label` job in ci.yml (actions/labeler@v5)
+# Labels are created automatically on first use.
+
+'area/ci':
+  - changed-files:
+    - any-glob-to-any-file: '.github/**'
+
+'area/cmd':
+  - changed-files:
+    - any-glob-to-any-file: 'cmd/**'
+
+'area/sentry':
+  - changed-files:
+    - any-glob-to-any-file: 'internal/sentry/**'
+
+'area/proto':
+  - changed-files:
+    - any-glob-to-any-file: '**/*.proto'
+    - any-glob-to-any-file: '**/*.pb.go'
+
+'area/docs':
+  - changed-files:
+    - any-glob-to-any-file: '*.md'
+    - any-glob-to-any-file: 'docs/**'
+
+'area/tests':
+  - changed-files:
+    - any-glob-to-any-file: '**/*_test.go'
+    - any-glob-to-any-file: 'test/**'
+
+'area/build':
+  - changed-files:
+    - any-glob-to-any-file: 'Makefile'
+    - any-glob-to-any-file: 'go.mod'
+    - any-glob-to-any-file: 'go.sum'
+    - any-glob-to-any-file: 'scripts/**'

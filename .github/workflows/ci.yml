@@ -3,14 +3,107 @@ name: WatchTower CI
 on:
   pull_request:
     branches: [ main ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
   push:
     branches: [ main ]
 
 permissions:
   contents: read
   security-events: write
+  pull-requests: write   # needed for PR comments & labels
+  issues: write          # needed for labeling
+
+# Cancel in-flight runs for the same PR branch to save minutes
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
+
+  # ─────────────────────────────────────────────
+  # PR metadata jobs (only on pull_request events)
+  # ─────────────────────────────────────────────
+
+  pr-label:
+    name: Auto-label PR
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Label by changed paths
+        uses: actions/labeler@v5
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/labeler.yml
+          sync-labels: true
+
+  pr-size:
+    name: PR Size Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count changed lines
+        id: diff
+        run: |
+          ADDITIONS=$(git diff --shortstat origin/${{ github.base_ref }}...HEAD \
+            | grep -oP '\d+ insertion' | grep -oP '\d+' || echo 0)
+          DELETIONS=$(git diff --shortstat origin/${{ github.base_ref }}...HEAD \
+            | grep -oP '\d+ deletion' | grep -oP '\d+' || echo 0)
+          TOTAL=$((ADDITIONS + DELETIONS))
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+          echo "additions=$ADDITIONS" >> "$GITHUB_OUTPUT"
+          echo "deletions=$DELETIONS" >> "$GITHUB_OUTPUT"
+
+      - name: Apply size label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const total = parseInt('${{ steps.diff.outputs.total }}');
+            let label = 'size/XS';
+            if (total > 500) label = 'size/XL';
+            else if (total > 200) label = 'size/L';
+            else if (total > 100) label = 'size/M';
+            else if (total > 30)  label = 'size/S';
+
+            const labels = ['size/XS','size/S','size/M','size/L','size/XL'];
+            // Ensure all size labels exist, then set the correct one
+            for (const l of labels) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo:  context.repo.repo,
+                  name:  l,
+                  color: l === label ? '0075ca' : 'e4e669',
+                });
+              } catch (_) { /* label already exists */ }
+            }
+            // Remove existing size labels then add the new one
+            const { data: existing } = await github.rest.issues.listLabelsOnIssue({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            for (const el of existing.filter(l => labels.includes(l.name))) {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: context.issue.number,
+                name: el.name,
+              });
+            }
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.issue.number,
+              labels: [label],
+            });
+
+  # ─────────────────────────────────────────────
+  # Core CI pipeline
+  # ─────────────────────────────────────────────
 
   lint:
     name: Lint (golangci-lint)
@@ -23,7 +116,8 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
+          cache: true
 
       - name: Install golangci-lint
         run: |
@@ -43,7 +137,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
+          cache: true
 
       - name: Run go vet
         run: go vet ./...
@@ -58,7 +153,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
+          cache: true
 
       - name: Run tests
         run: go test -v ./...
@@ -73,7 +169,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
+          cache: true
 
       - name: Run race detector
         run: go test -race ./...
@@ -88,12 +185,38 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
+          cache: true
 
-      - name: Generate coverage
+      - name: Generate coverage report
         run: |
-          go test ./... -coverprofile=coverage.out
-          go tool cover -func=coverage.out
+          go test ./... -coverprofile=coverage.out -covermode=atomic
+          go tool cover -func=coverage.out | tee coverage-summary.txt
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            coverage.out
+            coverage-summary.txt
+          retention-days: 14
+
+      - name: Extract total coverage %
+        id: cov
+        run: |
+          TOTAL=$(grep '^total:' coverage-summary.txt | awk '{print $3}')
+          echo "total=$TOTAL" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce minimum coverage (80%)
+        run: |
+          TOTAL="${{ steps.cov.outputs.total }}"
+          NUM=${TOTAL//%/}
+          echo "Coverage: $NUM%"
+          if (( $(echo "$NUM < 80" | bc -l) )); then
+            echo "❌ Coverage $NUM% is below the 80% threshold."
+            exit 1
+          fi
 
   security:
     name: Gosec Security Scan
@@ -104,9 +227,93 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install gosec
-        run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
 
-      - name: Run gosec
+      - name: Run gosec (SARIF output)
         run: |
-          $(go env GOPATH)/bin/gosec ./...
+          $(go env GOPATH)/bin/gosec -fmt sarif -out gosec.sarif ./... || true
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gosec.sarif
+
+      - name: Upload gosec SARIF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gosec-sarif
+          path: gosec.sarif
+          retention-days: 14
+
+  # ─────────────────────────────────────────────
+  # PR summary comment (posts after all jobs finish)
+  # ─────────────────────────────────────────────
+
+  pr-summary:
+    name: Post PR Summary
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: [ pr-label, pr-size, lint, vet, test, race, coverage, security ]
+    # Run even if upstream jobs failed so we always post a result
+    continue-on-error: true
+
+    steps:
+      - name: Download coverage summary
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+        continue-on-error: true
+
+      - name: Build summary comment
+        id: build_comment
+        run: |
+          LINT="${{ needs.lint.result }}"
+          VET="${{ needs.vet.result }}"
+          TEST="${{ needs.test.result }}"
+          RACE="${{ needs.race.result }}"
+          COV="${{ needs.coverage.result }}"
+          SEC="${{ needs.security.result }}"
+
+          icon() { [ "$1" = "success" ] && echo "✅" || echo "❌"; }
+
+          BODY="## 🗼 WatchTower CI Summary
+
+          | Job | Status |
+          |-----|--------|
+          | Lint | $(icon $LINT) \`$LINT\` |
+          | Go Vet | $(icon $VET) \`$VET\` |
+          | Unit Tests | $(icon $TEST) \`$TEST\` |
+          | Race Detector | $(icon $RACE) \`$RACE\` |
+          | Coverage | $(icon $COV) \`$COV\` |
+          | Security Scan | $(icon $SEC) \`$SEC\` |"
+
+          if [ -f coverage-summary.txt ]; then
+            TOTAL=$(grep '^total:' coverage-summary.txt | awk '{print $3}')
+            BODY="$BODY
+
+          **Coverage:** \`$TOTAL\`"
+          fi
+
+          BODY="$BODY
+
+          > _Updated: $(date -u '+%Y-%m-%d %H:%M UTC') · [View full run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})_"
+
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY"     >> "$GITHUB_OUTPUT"
+          echo "EOF"       >> "$GITHUB_OUTPUT"
+
+      - name: Find existing bot comment
+        id: find_comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: WatchTower CI Summary
+
+      - name: Create or update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.find_comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: ${{ steps.build_comment.outputs.body }}
+          edit-mode: replace
