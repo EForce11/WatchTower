@@ -33,5 +33,5 @@ ehthumbs.db
 Thumbs.db
 
 # test files
-wt-core 
-wt-sentry
+./wt-core 
+./wt-sentry
