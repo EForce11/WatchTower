@@ -32,6 +32,5 @@ go.work.sum
 ehthumbs.db
 Thumbs.db
 
-# test files
-wt-core 
-wt-sentry
+# github get files
+://github.com
