@@ -1,0 +1,540 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'task-*' ]
+  pull_request:
+    branches: [ main ]
+
+# Cancel in-progress runs if new push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+  checks: write
+
+jobs:
+  # ============================================================
+  # STAGE 1: FAST CHECKS (Run in parallel, ~2 minutes)
+  # ============================================================
+  
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true  # Cache Go modules
+        
+    - name: Download dependencies
+      run: go mod download
+      
+    - name: Verify dependencies
+      run: go mod verify
+      
+    - name: Build all packages
+      run: |
+        echo "Building cmd/wt-core..."
+        go build -v ./cmd/wt-core
+        
+        echo "Building cmd/wt-sentry..."
+        go build -v ./cmd/wt-sentry
+        
+        echo "Building cmd/wt-cli..."
+        go build -v ./cmd/wt-cli
+        
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: binaries
+        path: |
+          wt-core
+          wt-sentry
+          wt-cli
+        retention-days: 1
+
+  lint:
+    name: Linting
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+        
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=5m
+        
+  vet:
+    name: Go Vet
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+        
+    - name: Run go vet
+      run: go vet ./...
+      
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Check formatting
+      run: |
+        if [ -n "$(gofmt -l .)" ]; then
+          echo "❌ Code is not formatted. Run 'gofmt -w .'"
+          echo "Files needing formatting:"
+          gofmt -l .
+          exit 1
+        fi
+        echo "✅ All files are properly formatted"
+
+  # ============================================================
+  # STAGE 2: TESTS (Run after Stage 1, ~5 minutes)
+  # ============================================================
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [build, lint, vet, format]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+        
+    - name: Install dependencies
+      run: |
+        go mod download
+        go get github.com/fsnotify/fsnotify
+        go get github.com/shirou/gopsutil/v3
+        
+    - name: Run unit tests
+      run: |
+        go test -v -timeout 10m ./... 2>&1 | tee test-output.txt
+        
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results
+        path: test-output.txt
+        retention-days: 7
+
+  race-detector:
+    name: Race Detector
+    runs-on: ubuntu-latest
+    needs: [build, lint, vet, format]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+        
+    - name: Run race detector
+      run: go test -race -timeout 15m ./...
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    needs: [build, lint, vet, format]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+        
+    - name: Run tests with coverage
+      run: |
+        go test -coverprofile=coverage.out -covermode=atomic ./...
+        
+    - name: Generate coverage report
+      run: |
+        go tool cover -func=coverage.out | tee coverage-report.txt
+        
+    - name: Check coverage threshold
+      run: |
+        COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Total coverage: $COVERAGE%"
+        
+        # Warning if coverage < 70%
+        if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+          echo "::warning::Coverage is below 70% ($COVERAGE%)"
+        fi
+        
+        # Error if coverage < 50%
+        if (( $(echo "$COVERAGE < 50" | bc -l) )); then
+          echo "::error::Coverage is critically low ($COVERAGE%)"
+          exit 1
+        fi
+        
+    - name: Upload coverage to Codecov (optional)
+      uses: codecov/codecov-action@v3
+      with:
+        files: coverage.out
+        flags: unittests
+        fail_ci_if_error: false
+
+  # ============================================================
+  # STAGE 3: SECURITY (Run after Stage 2, ~3 minutes)
+  # ============================================================
+
+  gosec:
+    name: Security Scan (gosec)
+    runs-on: ubuntu-latest
+    needs: [unit-tests, race-detector]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Run gosec
+      uses: securego/gosec@master
+      with:
+        args: '-fmt sarif -out gosec-results.sarif ./...'
+        
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: gosec-results.sarif
+
+  sql-injection-check:
+    name: SQL Injection Detection
+    runs-on: ubuntu-latest
+    needs: [unit-tests, race-detector]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check for SQL concatenation
+      run: |
+        echo "🔍 Scanning for SQL injection vulnerabilities..."
+        FOUND=0
+        
+        # Check for dangerous SQL patterns
+        if grep -rn '"SELECT.*".*+' --include="*.go" .; then
+          echo "::error::❌ Potential SQL injection found! Use parameterized queries ($1, $2)."
+          FOUND=1
+        fi
+        
+        if grep -rn '"INSERT INTO.*".*+' --include="*.go" .; then
+          echo "::error::❌ Potential SQL injection in INSERT! Use parameterized queries."
+          FOUND=1
+        fi
+        
+        if grep -rn '"UPDATE.*SET.*".*+' --include="*.go" .; then
+          echo "::error::❌ Potential SQL injection in UPDATE! Use parameterized queries."
+          FOUND=1
+        fi
+        
+        if grep -rn '"DELETE FROM.*".*+' --include="*.go" .; then
+          echo "::error::❌ Potential SQL injection in DELETE! Use parameterized queries."
+          FOUND=1
+        fi
+        
+        if [ $FOUND -eq 0 ]; then
+          echo "✅ No SQL injection vulnerabilities detected"
+        else
+          exit 1
+        fi
+
+  command-injection-check:
+    name: Command Injection Detection
+    runs-on: ubuntu-latest
+    needs: [unit-tests, race-detector]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check for shell execution
+      run: |
+        echo "🔍 Scanning for command injection vulnerabilities..."
+        FOUND=0
+        
+        # Check for dangerous shell execution patterns
+        if grep -rn 'exec\.Command.*sh.*-c' --include="*.go" .; then
+          echo "::error::❌ Potential command injection! Avoid 'sh -c'."
+          FOUND=1
+        fi
+        
+        if grep -rn 'exec\.Command.*bash.*-c' --include="*.go" .; then
+          echo "::error::❌ Potential command injection! Avoid 'bash -c'."
+          FOUND=1
+        fi
+        
+        if grep -rn 'exec\.Command.*"sh"' --include="*.go" .; then
+          echo "::warning::⚠️ Using shell execution - verify input is validated."
+        fi
+        
+        if [ $FOUND -eq 0 ]; then
+          echo "✅ No obvious command injection vulnerabilities detected"
+        else
+          exit 1
+        fi
+
+  dependency-check:
+    name: Dependency Vulnerabilities
+    runs-on: ubuntu-latest
+    needs: [unit-tests, race-detector]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Run govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+
+  secrets-scan:
+    name: Secrets Detection
+    runs-on: ubuntu-latest
+    needs: [unit-tests, race-detector]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run Gitleaks
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITLEAKS_ENABLE_SUMMARY: true
+
+  # ============================================================
+  # STAGE 4: INTEGRATION TESTS (Critical PRs only)
+  # ============================================================
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [gosec, sql-injection-check, command-injection-check, dependency-check]
+    # Only run on PR to main or when label 'integration-test' is added
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: watchtower_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        cache: true
+        
+    - name: Install PostgreSQL client
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y postgresql-client
+        
+    - name: Setup database schema
+      env:
+        PGPASSWORD: postgres
+      run: |
+        psql -h localhost -U postgres -d watchtower_test -c "
+          CREATE TABLE IF NOT EXISTS events (
+            id BIGSERIAL PRIMARY KEY,
+            timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+            agent_id VARCHAR(255) NOT NULL,
+            event_type VARCHAR(100) NOT NULL,
+            severity INTEGER NOT NULL CHECK (severity BETWEEN 1 AND 4),
+            source_ip VARCHAR(45),
+            source_file VARCHAR(500),
+            message TEXT,
+            metadata JSONB,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+          );
+          
+          CREATE INDEX idx_events_timestamp ON events(timestamp DESC);
+          CREATE INDEX idx_events_agent_id ON events(agent_id);
+          CREATE INDEX idx_events_event_type ON events(event_type);
+          CREATE INDEX idx_events_severity ON events(severity);
+        "
+        
+    - name: Run integration tests
+      env:
+        DATABASE_URL: "host=localhost port=5432 user=postgres password=postgres dbname=watchtower_test sslmode=disable"
+      run: |
+        go test -v -timeout 20m ./test/integration/
+
+  # ============================================================
+  # SUMMARY & AUTO-COMMENT (PR only)
+  # ============================================================
+
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [build, lint, vet, format, unit-tests, race-detector, coverage, gosec, sql-injection-check, command-injection-check, dependency-check, secrets-scan]
+    if: always() && github.event_name == 'pull_request'
+    
+    steps:
+    - name: Generate summary
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const jobs = [
+            { name: 'Build', status: '${{ needs.build.result }}' },
+            { name: 'Lint', status: '${{ needs.lint.result }}' },
+            { name: 'Go Vet', status: '${{ needs.vet.result }}' },
+            { name: 'Format', status: '${{ needs.format.result }}' },
+            { name: 'Unit Tests', status: '${{ needs.unit-tests.result }}' },
+            { name: 'Race Detector', status: '${{ needs.race-detector.result }}' },
+            { name: 'Coverage', status: '${{ needs.coverage.result }}' },
+            { name: 'gosec', status: '${{ needs.gosec.result }}' },
+            { name: 'SQL Injection', status: '${{ needs.sql-injection-check.result }}' },
+            { name: 'Command Injection', status: '${{ needs.command-injection-check.result }}' },
+            { name: 'Dependencies', status: '${{ needs.dependency-check.result }}' },
+            { name: 'Secrets Scan', status: '${{ needs.secrets-scan.result }}' },
+          ];
+          
+          const passed = jobs.filter(j => j.status === 'success').length;
+          const failed = jobs.filter(j => j.status === 'failure').length;
+          const skipped = jobs.filter(j => j.status === 'skipped').length;
+          
+          let statusEmoji = '✅';
+          let statusText = 'All checks passed!';
+          
+          if (failed > 0) {
+            statusEmoji = '❌';
+            statusText = `${failed} check(s) failed`;
+          } else if (skipped > 0) {
+            statusEmoji = '⚠️';
+            statusText = 'Some checks were skipped';
+          }
+          
+          const tableRows = jobs.map(j => {
+            const emoji = j.status === 'success' ? '✅' : j.status === 'failure' ? '❌' : '⏭️';
+            return `| ${emoji} | ${j.name} | ${j.status} |`;
+          }).join('\n');
+          
+          const summary = `
+          ## ${statusEmoji} CI/CD Pipeline Results
+          
+          **Status:** ${statusText}
+          
+          | Status | Check | Result |
+          |--------|-------|--------|
+          ${tableRows}
+          
+          **Summary:**
+          - ✅ Passed: ${passed}
+          - ❌ Failed: ${failed}
+          - ⏭️ Skipped: ${skipped}
+          
+          ${failed > 0 ? '**⚠️ Action Required:** Please fix the failing checks before merging.' : ''}
+          ${failed === 0 && skipped === 0 ? '**✅ Ready to merge!** All checks passed successfully.' : ''}
+          
+          ---
+          
+          <details>
+          <summary>📊 View detailed logs</summary>
+          
+          Click on individual job names above to view detailed logs in the Actions tab.
+          </details>
+          `;
+          
+          // Find existing comment
+          const { data: comments } = await github.rest.issues.listComments({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+          });
+          
+          const botComment = comments.find(c => 
+            c.user.login === 'github-actions[bot]' && 
+            c.body.includes('CI/CD Pipeline Results')
+          );
+          
+          if (botComment) {
+            // Update existing comment
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: botComment.id,
+              body: summary
+            });
+          } else {
+            // Create new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: summary
+            });
+          }
