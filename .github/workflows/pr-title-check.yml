@@ -1,0 +1,76 @@
+name: PR Title Check
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+
+permissions:
+  pull-requests: read
+
+jobs:
+  check-pr-title:
+    name: Validate PR title (Conventional Commits)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check PR title format
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "PR title: \"$PR_TITLE\""
+
+          # Valid types
+          VALID_TYPES="feat|fix|docs|test|refactor|perf|ci|chore|security"
+
+          # Pattern breakdown:
+          #   ^(type)          — lowercase type from the allowed list
+          #   (\([a-z0-9/-]+\))?  — optional lowercase scope in parentheses
+          #   :[ ]             — colon followed by exactly one space
+          #   [a-z]            — description must start with lowercase letter
+          #   .{9,}$           — remaining description; total desc >= 10 chars
+          PATTERN="^(${VALID_TYPES})(\([a-z0-9/_-]+\))?: [a-z].{9,}$"
+
+          if echo "$PR_TITLE" | grep -qP "$PATTERN"; then
+            # Extract type and optional scope for the success message
+            TYPE=$(echo "$PR_TITLE" | grep -oP "^(${VALID_TYPES})")
+            SCOPE=$(echo "$PR_TITLE" | grep -oP "(?<=\()([a-z0-9/_-]+)(?=\))" || true)
+
+            echo ""
+            echo "✅ PR title is valid."
+            echo "   Type  : $TYPE"
+            if [ -n "$SCOPE" ]; then
+              echo "   Scope : $SCOPE"
+            else
+              echo "   Scope : (none)"
+            fi
+          else
+            echo ""
+            echo "❌ PR title does not follow the Conventional Commits format."
+            echo ""
+            echo "Expected format:"
+            echo "  type(scope): description"
+            echo ""
+            echo "  • type        — one of: feat, fix, docs, test, refactor, perf, ci, chore, security"
+            echo "  • scope       — optional; must be lowercase if provided"
+            echo "  • description — at least 10 characters; must start with a lowercase letter"
+            echo ""
+            echo "Valid examples:"
+            echo "  feat(sentry): add fsnotify log watcher"
+            echo "  fix(turret): prevent self-ban on localhost"
+            echo "  ci: fix go version mismatch in pipeline"
+            echo "  docs: update phase 1 progress tracker"
+            echo ""
+            echo "Invalid examples:"
+            echo "  Added new feature         ← no type prefix"
+            echo "  feat: fix                 ← description too short (< 10 chars)"
+            echo "  Feat(sentry): something   ← type must be lowercase"
+            echo ""
+            echo "Your title: \"$PR_TITLE\""
+            exit 1
+          fi
