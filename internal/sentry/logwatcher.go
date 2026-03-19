@@ -3,6 +3,7 @@ package sentry
 import (
 	"bufio"
 	"context"
+	"io"
 	"log"
 	"os"
 	"sync"
@@ -13,9 +14,10 @@ import (
 
 // LogWatcher monitors log files for new entries using inotify (fsnotify).
 type LogWatcher struct {
-	watcher  *fsnotify.Watcher
-	logPaths []string
-	events   chan LogEvent
+	watcher   *fsnotify.Watcher
+	logPaths  []string
+	events    chan LogEvent
+	closeOnce sync.Once
 
 	// offsets tracks the last read position per file path.
 	mu      sync.Mutex
@@ -102,7 +104,7 @@ func (lw *LogWatcher) handleFileChange(filePath string) {
 	lw.mu.Unlock()
 
 	// Seek to where we last finished reading.
-	if _, err := file.Seek(offset, os.SEEK_SET); err != nil {
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		log.Printf("[logwatcher] seek error on %s: %v", filePath, err)
 		return
 	}
@@ -118,7 +120,7 @@ func (lw *LogWatcher) handleFileChange(filePath string) {
 	}
 
 	// Update the stored offset.
-	newOffset, err := file.Seek(0, os.SEEK_CUR)
+	newOffset, err := file.Seek(0, io.SeekCurrent)
 	if err == nil {
 		lw.mu.Lock()
 		lw.offsets[filePath] = newOffset
@@ -134,6 +136,8 @@ func (lw *LogWatcher) Events() <-chan LogEvent {
 // Close stops the underlying fsnotify watcher and closes the events channel.
 // Callers must not send on or receive from Events() after Close returns.
 func (lw *LogWatcher) Close() error {
-	close(lw.events)
+	lw.closeOnce.Do(func() {
+		close(lw.events)
+	})
 	return lw.watcher.Close()
 }
