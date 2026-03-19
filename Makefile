@@ -67,7 +67,7 @@ fmt:
 # Lint code
 lint:
 	@echo "🔍 Linting code..."
-	golint ./...
+	golangci-lint run ./...
 	@echo "✅ Lint complete"
 
 # Show help
