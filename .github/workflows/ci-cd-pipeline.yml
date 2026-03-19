@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop, 'task-*' ]
+    branches: [ master, develop, 'task-*' ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 # Cancel in-progress runs if new push
 concurrency:
@@ -369,7 +369,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [gosec, sql-injection-check, command-injection-check, dependency-check]
     # Only run on PR to main or when label 'integration-test' is added
-    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+    if: github.event_name == 'pull_request' && github.base_ref == 'master'
     
     services:
       postgres:
