@@ -51,12 +51,12 @@ func NewPatternMatcher() *PatternMatcher {
 			},
 
 			// ── SQL Injection ─────────────────────────────────────────────────
-		{
-			Name:        "SQLI_UNION",
-			Regex:       regexp.MustCompile(`(?i)\bunion\s+(all\s+)?select\b`),
-			Severity:    4,
-			Description: "SQL injection attempt (UNION/SELECT)",
-		},
+			{
+				Name:        "SQLI_UNION",
+				Regex:       regexp.MustCompile(`(?i)\bunion\s+(all\s+)?select\b`),
+				Severity:    4,
+				Description: "SQL injection attempt (UNION/SELECT)",
+			},
 			{
 				Name:        "SQLI_COMMENT",
 				Regex:       regexp.MustCompile(`(--|#|/\*|\*/)`),
