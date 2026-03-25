@@ -3,6 +3,7 @@ package sentry
 import (
 	"bufio"
 	"context"
+	"io"
 	"log"
 	"os"
 	"sync"
@@ -102,7 +103,7 @@ func (lw *LogWatcher) handleFileChange(filePath string) {
 	lw.mu.Unlock()
 
 	// Seek to where we last finished reading.
-	if _, err := file.Seek(offset, os.SEEK_SET); err != nil {
+	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		log.Printf("[logwatcher] seek error on %s: %v", filePath, err)
 		return
 	}
@@ -118,7 +119,7 @@ func (lw *LogWatcher) handleFileChange(filePath string) {
 	}
 
 	// Update the stored offset.
-	newOffset, err := file.Seek(0, os.SEEK_CUR)
+	newOffset, err := file.Seek(0, io.SeekCurrent)
 	if err == nil {
 		lw.mu.Lock()
 		lw.offsets[filePath] = newOffset
