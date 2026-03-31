@@ -29,7 +29,7 @@ func sendHeartbeat(client pb.AgentServiceClient, agentID string) {
 		AgentId: agentID,
 		Timestamp: &timestamp.Timestamp{
 			Seconds: now.Unix(),
-			Nanos:   int32(now.Nanosecond()),
+			Nanos:   int32(now.Nanosecond()), //nolint:gosec // G115: Nanosecond() ∈ [0,999_999_999], well within int32 range
 		},
 	}
 
@@ -71,7 +71,7 @@ func main() {
 
 	client := pb.NewAgentServiceClient(conn)
 
-	// Create a cancellable context for the heartbeat loop
+	// Create a cancelable context for the heartbeat loop
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
