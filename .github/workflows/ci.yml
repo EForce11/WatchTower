@@ -6,14 +6,18 @@ on:
   pull_request:
     branches: [ master ]
 
+# Node 24 uyarısını susturmak ve geleceğe hazırlık için eklediğimiz blok
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.24.x'
           cache: true
@@ -49,15 +53,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test]
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.24.x'
           cache: true
-
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+          
+      - uses: golangci/golangci-lint-action@v3
         with:
           version: v1.64.8
           args: --timeout=5m
@@ -67,9 +70,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.24.x'
           cache: true
