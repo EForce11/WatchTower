@@ -1,11 +1,77 @@
 run:
   timeout: 5m
+  # Fail on first error rather than collecting all errors
+  issues-exit-code: 1
 
 linters:
   enable:
-    - govet
-    - staticcheck
-    - errcheck
-    - gosimple
-    - ineffassign
-    - typecheck
+    # --- Default / Essential ---
+    - govet        # Reports suspicious constructs
+    - staticcheck  # The gold-standard Go static analyser
+    - errcheck     # Checks for unchecked errors
+    - gosimple     # Simplification suggestions
+    - ineffassign  # Detects ineffectual assignments
+    - typecheck    # Runs the Go type checker
+
+    # --- Security ---
+    - gosec        # Security-oriented checks (G101–G501)
+
+    # --- Code Quality ---
+    - gocritic     # Comprehensive style and performance checks
+    - revive       # Replacement for golint — opinionated but practical
+    - gocyclo      # Cyclomatic complexity guard (prevents deep nesting)
+    - misspell     # Catches common English spelling mistakes in comments/strings
+    - prealloc     # Detects slices that could be pre-allocated
+    - bodyclose    # Checks that HTTP response bodies are closed
+    - noctx        # Detects http.NewRequest without context
+    - unconvert    # Removes unnecessary type conversions
+    - unparam      # Finds parameters that always receive the same value
+    - exportloopref # Detects loop variable capture (fixed in Go 1.22, but keep for clarity)
+
+    # --- Formatting ---
+    - gofmt        # Enforces standard formatting
+    - goimports    # Validates import grouping and formatting
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+
+  gosec:
+    excludes:
+      - G104 # Errors unhandled — already caught by errcheck
+    severity: medium
+    confidence: medium
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - "checkPrivateReceivers"
+          - "sayRepetitiveInsteadOfStutters"
+
+  misspell:
+    locale: US
+
+issues:
+  # Allow some patterns that are acceptable in this codebase
+  exclude-rules:
+    # Test files: allow more permissive patterns
+    - path: "_test\\.go"
+      linters:
+        - gosec
+        - unparam
+
+    # Generated protobuf files: skip entirely
+    - path: "pkg/protocol/.*\\.pb\\.go"
+      linters:
+        - all
+
+  # Show all issues, not just the first 3 per linter
+  max-issues-per-linter: 0
+  max-same-issues: 0

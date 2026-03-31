@@ -1,108 +1,157 @@
 # WatchTower XDR
 
-Enterprise-grade Extended Detection and Response for everyone, everywhere.
+<div align="center">
 
-## Project Status
+**Enterprise-grade Extended Detection and Response — open, auditable, self-hosted.**
 
-- **Phase 0:** ✅ Complete (gRPC communication)
-- **Phase 1:** ⏳ In Progress (log monitoring)
-- **Version:** v0.2.0-alpha
+[![CI](https://github.com/EForce11/WatchTower/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/EForce11/WatchTower/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml/badge.svg)](https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml)
+[![Go Version](https://img.shields.io/badge/go-1.24-00ADD8?logo=go)](https://go.dev/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Release](https://img.shields.io/github/v/release/EForce11/WatchTower?include_prereleases)](https://github.com/EForce11/WatchTower/releases)
 
-## Features (Phase 0)
+</div>
 
-- ✅ gRPC-based agent-core communication
-- ✅ Heartbeat mechanism (agent health monitoring)
-- ✅ Automatic reconnection with exponential backoff
-- ✅ Graceful shutdown handling
-- ✅ Integration tests
+---
+
+## What is WatchTower XDR?
+
+WatchTower is an **open-source XDR (Extended Detection and Response)** platform designed to be self-hosted, auditable, and extensible. It collects security telemetry from distributed agents, correlates events against threat patterns, and provides real-time alerting — without sending your data to a third party.
+
+> **Status:** Active development — see the [Roadmap](#roadmap) for what's coming next.
+
+---
 
 ## Architecture
 
 ```
-┌──────────────┐         gRPC/mTLS          ┌──────────────┐
-│  WT-Sentry   │ ◄──────────────────────► │   WT-Core    │
-│   (Agent)    │    Heartbeat (10s)         │  (Central)   │
-│              │                            │              │
-│ Port: N/A    │                            │ Port: 50051  │
-└──────────────┘                            └──────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        WatchTower XDR                           │
+│                                                                 │
+│  ┌──────────────┐   gRPC / mTLS   ┌──────────────────────────┐ │
+│  │  wt-sentry   │ ◄─────────────► │       wt-core            │ │
+│  │   (Agent)    │  Heartbeat 10s  │   (Central Server)       │ │
+│  │              │                 │   Port :50051            │ │
+│  │ - Log watch  │                 │ - Agent registry         │ │
+│  │ - Pattern    │                 │ - Event correlation      │ │
+│  │   matching   │                 │ - Alert dispatch         │ │
+│  └──────────────┘                 └──────────────────────────┘ │
+│                                                                 │
+│  ┌───────────────┐                                             │
+│  │    wt-cli     │  ← unified management interface (Phase 3+) │
+│  └───────────────┘                                             │
+└─────────────────────────────────────────────────────────────────┘
 ```
+
+For full architecture details, see [docs/architecture.md](docs/architecture.md).
+
+---
+
+## Features
+
+### ✅ Phase 0 — Core Communication (v0.2.0)
+- gRPC-based agent ↔ core communication
+- Heartbeat mechanism with health monitoring
+- Automatic reconnection with exponential backoff
+- Graceful shutdown handling
+- Integration test suite
+
+### ⏳ Phase 1 — Log Monitoring (In Progress)
+- Real-time log file monitoring via inotify (`fsnotify`)
+- Security event pattern matching (regex-based rules)
+- Log event streaming to core
+
+### 🔲 Upcoming Phases
+| Phase | Feature | Target |
+|-------|---------|--------|
+| 2 | TimescaleDB + Grafana dashboards | v0.4.0 |
+| 3 | Automated IP blocking (Turret) | v0.6.0 |
+| 4 | Anomaly detection engine | v0.8.0 |
+| 6 | Application WAF (Interceptor) | v1.0.0 |
+
+---
 
 ## Quick Start
 
 ### Prerequisites
-- Go 1.21+
-- protoc (Protocol Buffers compiler)
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Go | 1.24+ | Build toolchain |
+| protoc | Any | Compile .proto files |
+| make | Any | Build automation |
 
 ### Install
 
 ```bash
-# Clone repository
+# Clone the repository
 git clone https://github.com/EForce11/WatchTower
 cd WatchTower
 
-# Build
+# Install Go code generation tools
+make dev-deps
+
+# Build all binaries
 make build
 ```
 
 ### Run
 
 ```bash
-# Terminal 1: Start Core
+# Terminal 1 — Start the central server
 make run-core
 
-# Terminal 2: Start Sentry (in another terminal)
+# Terminal 2 — Start a monitoring agent
 make run-sentry
 
-# You should see heartbeats every 10 seconds
+# You should see heartbeats logged every 10 seconds
 ```
 
 ### Test
 
 ```bash
-# Run all tests
+# Run all unit and integration tests
 make test
 
-# Run integration test
+# Run integration test only
 make integration-test
+
+# Run integration test with race detector
+make integration-test-race
 
 # Verify Phase 0 completion
 ./scripts/verify-phase0.sh
 ```
 
-## Build from Source
-
-```bash
-# Compile protobuf
-make proto
-
-# Build all components
-make build
-
-# Clean build artifacts
-make clean
-```
+---
 
 ## Project Structure
 
 ```
 WatchTower/
 ├── cmd/
-│   ├── wt-core/         # Central server
-│   ├── wt-sentry/       # Monitoring agent
-│   └── wt-cli/          # CLI tool (future)
+│   ├── wt-core/         # Central server (gRPC, event correlation)
+│   ├── wt-sentry/       # Monitoring agent (log watcher, heartbeat)
+│   └── wt-cli/          # Management CLI (Phase 3+, stub)
+├── internal/
+│   └── sentry/          # Agent internals (log watcher, pattern matcher)
 ├── pkg/
-│   └── protocol/        # gRPC protocol definitions
-├── internal/            # Private packages (future)
+│   └── protocol/        # Protobuf definitions + generated gRPC code
 ├── test/
-│   └── integration/     # Integration tests
-└── scripts/             # Helper scripts
+│   └── integration/     # End-to-end integration tests
+├── docs/                # Architecture and deployment documentation
+└── scripts/             # Developer helper scripts
 ```
+
+---
 
 ## Development
 
-See [docs/architecture.md](docs/architecture.md) for complete architecture.
+See [docs/architecture.md](docs/architecture.md) for full architecture documentation.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, branch naming, and commit conventions.
+
+---
 
 ## Roadmap
 
@@ -114,19 +163,36 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 - [ ] Phase 6: Application WAF (Interceptor)
 - [ ] v1.0.0: Production release
 
+---
+
 ## Contributing
 
-This is a senior design/capstone project. Contributions welcome after v1.0.0 release.
+WatchTower is an open project. Contributions, bug reports, and feature requests are welcome.
+Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+
+---
+
+## Security
+
+If you discover a security vulnerability, **do not open a public issue.**
+Please follow the responsible disclosure process described in [SECURITY.md](SECURITY.md).
+
+---
 
 ## License
 
-MIT License - See LICENSE file
+WatchTower XDR is free software: you can redistribute it and/or modify it under the terms of the
+[GNU General Public License v3.0](LICENSE) as published by the Free Software Foundation.
+
+---
 
 ## Author
 
-Emir Furkan Ulu  
+**Emir Furkan Ulu**
 GitHub: [@EForce11](https://github.com/EForce11)
 
 ---
 
-**WatchTower XDR** - Security you can trust, infrastructure you control.
+<div align="center">
+<sub>WatchTower XDR — Security you can trust, infrastructure you control.</sub>
+</div>
