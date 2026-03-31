@@ -71,9 +71,10 @@ lint:
 	@echo "✅ Lint complete"
 
 # Run tests and generate coverage profile
+# Excludes cmd/ (main packages) and generated .pb.go files — mirrors CI behaviour.
 cover:
 	@echo "📊 Generating coverage report..."
-	go test -coverprofile=coverage.out -covermode=atomic ./...
+	go test -coverprofile=coverage.out -covermode=atomic ./internal/...
 	go tool cover -func=coverage.out
 	@echo "✅ Coverage report complete"
 
@@ -82,12 +83,12 @@ cover-html: cover
 	@echo "🌐 Opening coverage report in browser..."
 	go tool cover -html=coverage.out
 
-# Check coverage meets 50% threshold (mirrors CI)
+# Check coverage meets 75% threshold (mirrors CI — testable packages only)
 check-coverage: cover
 	@COVERAGE=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | tr -d '%'); \
 	echo "Total coverage: $${COVERAGE}%"; \
-	if awk "BEGIN {exit !($$COVERAGE < 50)}"; then \
-		echo "❌ Coverage $${COVERAGE}% is below the 50% threshold"; exit 1; \
+	if awk "BEGIN {exit !($$COVERAGE < 75)}"; then \
+		echo "❌ Coverage $${COVERAGE}% is below the 75% threshold"; exit 1; \
 	fi; \
 	echo "✅ Coverage $${COVERAGE}% meets the threshold"
 
