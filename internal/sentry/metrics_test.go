@@ -71,7 +71,7 @@ func TestMetricsCollector_MultipleSnapshots(t *testing.T) {
 }
 
 // TestMetricsCollector_ContextCancellation verifies that the collector stops
-// sending metrics after its context is cancelled.
+// sending metrics after its context is canceled.
 func TestMetricsCollector_ContextCancellation(t *testing.T) {
 	t.Parallel()
 
