@@ -33,19 +33,19 @@ func NewPatternMatcher() *PatternMatcher {
 			// ── SSH ──────────────────────────────────────────────────────────────
 			{
 				Name:        "SSH_FAILED_PASSWORD",
-				Regex:       regexp.MustCompile(`Failed password for .* from ([\d\.]+)`),
+				Regex:       regexp.MustCompile(`Failed password for .* from ([\d.]+)`),
 				Severity:    2,
 				Description: "SSH failed login attempt",
 			},
 			{
 				Name:        "SSH_INVALID_USER",
-				Regex:       regexp.MustCompile(`Invalid user .* from ([\d\.]+)`),
+				Regex:       regexp.MustCompile(`Invalid user .* from ([\d.]+)`),
 				Severity:    2,
 				Description: "SSH login attempt with invalid user",
 			},
 			{
 				Name:        "SSH_ROOT_LOGIN",
-				Regex:       regexp.MustCompile(`Failed password for root from ([\d\.]+)`),
+				Regex:       regexp.MustCompile(`Failed password for root from ([\d.]+)`),
 				Severity:    3,
 				Description: "SSH root login attempt",
 			},
