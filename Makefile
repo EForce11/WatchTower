@@ -1,4 +1,4 @@
-.PHONY: proto build test integration-test integration-test-race clean run-core run-sentry dev-deps fmt lint help all
+.PHONY: proto build test integration-test integration-test-race clean run-core run-sentry dev-deps fmt lint cover cover-html check-coverage help all
 
 # Default target
 all: build
@@ -70,6 +70,27 @@ lint:
 	golangci-lint run ./...
 	@echo "✅ Lint complete"
 
+# Run tests and generate coverage profile
+cover:
+	@echo "📊 Generating coverage report..."
+	go test -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out
+	@echo "✅ Coverage report complete"
+
+# Open coverage report in browser
+cover-html: cover
+	@echo "🌐 Opening coverage report in browser..."
+	go tool cover -html=coverage.out
+
+# Check coverage meets 50% threshold (mirrors CI)
+check-coverage: cover
+	@COVERAGE=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | tr -d '%'); \
+	echo "Total coverage: $${COVERAGE}%"; \
+	if awk "BEGIN {exit !($$COVERAGE < 50)}"; then \
+		echo "❌ Coverage $${COVERAGE}% is below the 50% threshold"; exit 1; \
+	fi; \
+	echo "✅ Coverage $${COVERAGE}% meets the threshold"
+
 # Show help
 help:
 	@echo "WatchTower XDR - Makefile Commands"
@@ -84,10 +105,13 @@ help:
 	@echo "  make run-sentry      - Start Sentry agent"
 	@echo ""
 	@echo "Test:"
-	@echo "  make test            - Run all tests"
-	@echo "  make integration-test - Run integration test"
+	@echo "  make test             - Run all tests"
+	@echo "  make integration-test  - Run integration test"
+	@echo "  make cover            - Generate coverage report (terminal)"
+	@echo "  make cover-html       - Open coverage report in browser"
+	@echo "  make check-coverage   - Verify coverage meets 50%% threshold"
 	@echo ""
 	@echo "Development:"
-	@echo "  make dev-deps        - Install dev dependencies"
-	@echo "  make fmt             - Format code"
-	@echo "  make lint            - Lint code"
+	@echo "  make dev-deps         - Install dev dependencies"
+	@echo "  make fmt              - Format code"
+	@echo "  make lint             - Lint code"
