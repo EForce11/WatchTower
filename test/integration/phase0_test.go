@@ -3,6 +3,7 @@ package integration
 import (
 	"bufio"
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -17,8 +18,18 @@ import (
 //
 //	go test -v -timeout 90s ./test/integration/
 func TestPhase0_HeartbeatFlow(t *testing.T) {
-	// Overall test budget: 70 s (65 s observation + 5 s buffer for startup/shutdown).
-	ctx, cancel := context.WithTimeout(context.Background(), 70*time.Second)
+	// Calculate wait duration from configured heartbeat interval.
+	// With 1s interval: 1 immediate + 7 ticks in 8 seconds = 8 heartbeats.
+	// Default (10s interval): 1 immediate + 6 ticks in 65 seconds = 7 heartbeats.
+	waitDuration := 65 * time.Second
+	if v := os.Getenv("WT_HEARTBEAT_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			waitDuration = d*7 + 2*time.Second
+		}
+	}
+
+	// Overall test budget: waitDuration + 10 s buffer for startup/shutdown.
+	ctx, cancel := context.WithTimeout(context.Background(), waitDuration+10*time.Second)
 	defer cancel()
 
 	// Thread-safe heartbeat counter.
@@ -72,6 +83,7 @@ func TestPhase0_HeartbeatFlow(t *testing.T) {
 	// -------------------------------------------------------------------------
 	t.Log("Starting Sentry...")
 	sentryCmd := exec.CommandContext(ctx, "go", "run", "../../cmd/wt-sentry/main.go")
+	sentryCmd.Env = append(os.Environ(), "WT_HEARTBEAT_INTERVAL=1s")
 
 	// Capture Sentry stderr for visibility (optional but helpful for debugging).
 	sentryStderr, err := sentryCmd.StderrPipe()
@@ -100,10 +112,10 @@ func TestPhase0_HeartbeatFlow(t *testing.T) {
 	// -------------------------------------------------------------------------
 	// 3. Wait for heartbeats
 	// -------------------------------------------------------------------------
-	// Sentry sends 1 immediate heartbeat + 1 every 10 s.
-	// In 65 s we expect: 1 + 6 = 7 heartbeats.  We assert ≥ 6 for a small margin.
-	t.Log("Waiting 65 seconds for heartbeats...")
-	time.Sleep(65 * time.Second)
+	// Sentry sends 1 immediate heartbeat + 1 per interval.
+	// With 1s interval: 1 + 7 ticks in 8 s = 8 heartbeats. We assert ≥ 6 for variance.
+	t.Logf("Waiting %v for heartbeats...", waitDuration)
+	time.Sleep(waitDuration)
 
 	// -------------------------------------------------------------------------
 	// 4. Verify heartbeat count
