@@ -145,7 +145,7 @@ func TestLogWatcher_IgnoresPreExistingContent(t *testing.T) {
 }
 
 // TestLogWatcher_ContextCancellation verifies the watcher stops when ctx
-// is cancelled.
+// is canceled.
 func TestLogWatcher_ContextCancellation(t *testing.T) {
 	tmpfile, err := os.CreateTemp("", "test-ctx-*.log")
 	if err != nil {

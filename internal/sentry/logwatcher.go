@@ -46,7 +46,7 @@ func NewLogWatcher(logPaths []string) (*LogWatcher, error) {
 			return nil, err
 		}
 
-		// Initialise offset to the current end of file so only *new* lines
+		// Initialize offset to the current end of file so only *new* lines
 		// written after Watch() is called are emitted.
 		info, err := os.Stat(path)
 		if err == nil {
@@ -65,7 +65,7 @@ func NewLogWatcher(logPaths []string) (*LogWatcher, error) {
 }
 
 // Watch starts a background goroutine that monitors all registered log files.
-// It returns when ctx is cancelled.
+// It returns when ctx is canceled.
 func (lw *LogWatcher) Watch(ctx context.Context) {
 	go func() {
 		for {

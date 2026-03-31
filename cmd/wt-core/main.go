@@ -38,7 +38,7 @@ func (s *server) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.H
 
 func main() {
 	// 1. Create TCP listener on :50051
-	lis, err := net.Listen("tcp", port)
+	lis, err := net.Listen("tcp", port) // #nosec G102 -- intentional: gRPC server must accept connections from all interfaces
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
