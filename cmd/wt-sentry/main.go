@@ -29,7 +29,7 @@ func sendHeartbeat(client pb.AgentServiceClient, agentID string) {
 		AgentId: agentID,
 		Timestamp: &timestamp.Timestamp{
 			Seconds: now.Unix(),
-			Nanos:   int32(now.Nanosecond()), //nolint:gosec // G115: Nanosecond() ∈ [0,999_999_999], well within int32 range
+			Nanos:   int32(now.Nanosecond()), // #nosec G115 -- Nanosecond() ∈ [0,999_999_999], always within int32 range
 		},
 	}
 
