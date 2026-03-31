@@ -26,7 +26,6 @@ linters:
     - noctx        # Detects http.NewRequest without context
     - unconvert    # Removes unnecessary type conversions
     - unparam      # Finds parameters that always receive the same value
-    - exportloopref # Detects loop variable capture (fixed in Go 1.22, but keep for clarity)
 
     # --- Formatting ---
     - gofmt        # Enforces standard formatting
