@@ -1,0 +1,85 @@
+version: 2
+
+project_name: watchtower
+
+builds:
+  - id: wt-core
+    main: ./cmd/wt-core
+    binary: wt-core
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{.Version}} -X main.Commit={{.Commit}} -X main.BuildDate={{.Date}}
+
+  - id: wt-sentry
+    main: ./cmd/wt-sentry
+    binary: wt-sentry
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{.Version}} -X main.Commit={{.Commit}} -X main.BuildDate={{.Date}}
+
+  - id: wt-cli
+    main: ./cmd/wt-cli
+    binary: wt-cli
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{.Version}} -X main.Commit={{.Commit}} -X main.BuildDate={{.Date}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - src: LICENSE
+        strip_parent: true
+        info:
+          mode: 0644
+    allow_different_binary_count: true
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Features
+      regexp: "^feat"
+      order: 0
+    - title: Bug Fixes
+      regexp: "^fix"
+      order: 1
+    - title: Others
+      order: 999
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^ci:"
+      - "^Merge "
+
+release:
+  github:
+    owner: EForce11
+    name: WatchTower
+  draft: false
+  prerelease: auto
+  make_latest: true

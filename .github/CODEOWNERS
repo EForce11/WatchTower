@@ -1,0 +1,15 @@
+# CODEOWNERS — every PR must be reviewed by the listed owner(s).
+# Rules are evaluated bottom-up; the last matching rule wins.
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything not matched by a more specific rule
+* @EForce11
+
+# Protocol definitions — protobuf changes are breaking changes
+pkg/protocol/ @EForce11
+
+# CI/CD workflows — pipeline changes require explicit review
+.github/workflows/ @EForce11
+
+# Security-sensitive pattern definitions
+internal/sentry/patterns.go @EForce11
