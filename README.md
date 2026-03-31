@@ -100,11 +100,9 @@ WatchTower/
 
 ## Development
 
-See [WatchTower-XDR-Architecture-v2.1.md](WatchTower-XDR-Architecture-v2.1.md) for complete architecture.
+See [docs/architecture.md](docs/architecture.md) for complete architecture.
 
-See [progress.md](progress.md) for development status.
-
-See [agents.md](agents.md) for AI agent workflow.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## Roadmap
 
@@ -132,4 +130,3 @@ GitHub: [@EForce11](https://github.com/EForce11)
 ---
 
 **WatchTower XDR** - Security you can trust, infrastructure you control.
-# CI Pipeline Test
