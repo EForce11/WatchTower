@@ -1,86 +1,76 @@
 # Branch Protection Setup
 
-This document describes the GitHub UI configuration required to enforce branch
-protection in the WatchTower XDR repository. Apply these settings after pushing
-the files in `.github/` to the repository.
+Branch protection rules for WatchTower XDR are applied programmatically via
+the GitHub API using the `gh` CLI. The script below is the **single source of
+truth** — re-run it any time rules are reset or the repo is transferred.
 
-Navigate to **Settings → Branches → Branch protection rules** to manage these
-rules.
-
----
-
-## `master` Branch
-
-`master` is the default branch and every merge is treated as a release
-checkpoint. Apply the strictest set of protections.
-
-1. **Require a pull request before merging** → **Enabled**
-2. **Required number of approvals before merging** → **1**
-   _(For a solo project, self-approval satisfies this requirement.)_
-3. **Dismiss stale pull request approvals when new commits are pushed** → **Enabled**
-4. **Require status checks to pass before merging** → **Enabled**
-   Required checks (search and select each individually):
-   - `build`
-   - `lint`
-   - `vet`
-   - `format`
-   - `unit-tests`
-5. **Require branches to be up to date before merging** → **Enabled**
-6. **Do not allow bypassing the above settings** → **Enabled**
-7. **Allow force pushes** → **Disabled**
-8. **Allow deletions** → **Disabled**
+> **Applied:** 2026-03-31 — run `scripts/apply-branch-protection.sh` to re-apply.
 
 ---
 
-## `develop` Branch
+## Applying the Rules
 
-`develop` is the phase integration branch. It has lighter protections to allow
-more frequent integration merges from feature branches.
+```bash
+# Requires: gh CLI authenticated with repo scope
+gh auth status
 
-1. **Require a pull request before merging** → **Enabled**
-2. **Required number of approvals before merging** → **1**
-3. **Require status checks to pass before merging** → **Enabled**
-   Required checks:
-   - `build`
-   - `unit-tests`
-4. **Allow force pushes** → **Disabled**
-5. **Allow deletions** → **Disabled**
+# Apply all rules
+./scripts/apply-branch-protection.sh
+```
+
+---
+
+## `master` Branch — Active Rules
+
+| Rule | Value |
+|------|-------|
+| Require PR before merging | ✅ Enabled |
+| Required approvals | 1 |
+| Dismiss stale reviews on new push | ✅ Enabled |
+| Require Code Owner review | ✅ Enabled (CODEOWNERS enforced) |
+| Require status checks to pass | ✅ Enabled |
+| Require branch to be up to date | ✅ Strict (must be current with `master`) |
+| Required checks | `Test`, `Lint`, `Security (gosec)`, `CodeQL Analysis`, `Validate PR title (Conventional Commits)` |
+| Require conversation resolution | ✅ Enabled |
+| Enforce rules on admins | ✅ Enabled (no bypass) |
+| Allow force pushes | ❌ Disabled |
+| Allow branch deletion | ❌ Disabled |
 
 ---
 
 ## Branch Naming Conventions
 
-| Branch pattern | Purpose | Merges into |
-|---|---|---|
+| Pattern | Purpose | Merges into |
+|---------|---------|-------------|
 | `master` | Protected release checkpoint | — |
-| `develop` | Phase integration branch | `master` |
-| `task-X.Y/*` | Short-lived feature branch for a single task | `develop` |
-| `fix/*` | Hotfix branch | `master` (and back-ported to `develop`) |
-
-Examples:
-- `task-1.3/sentry-log-watcher`
-- `task-2.1/turret-rate-limiter`
-- `fix/prevent-self-ban`
+| `develop` | Phase integration branch | `master` via PR |
+| `feat/*` | New feature | `develop` or `master` |
+| `fix/*` | Bug fix / hotfix | `master` (back-port to `develop`) |
+| `ci/*` | CI/CD pipeline changes | `master` |
+| `docs/*` | Documentation only | `master` |
+| `chore/*` | Maintenance / deps | `master` |
+| `task-X.Y/*` | Legacy task branch format | `develop` |
 
 ---
 
 ## Notes
 
-### PR title check must run at least once before it appears in required checks
+### PR title check must run once before it appears in required checks
 
-The `pr-title-check` workflow will not appear in the **required status checks**
-search box until it has executed at least once on an actual pull request
-targeting `master`. To make it available:
+The `Validate PR title (Conventional Commits)` check won't appear in the
+GitHub UI as a selectable required check until it has executed at least once
+on an actual PR targeting `master`.
 
-1. Open any pull request targeting `master`.
-2. Wait for the `check-pr-title` job to complete (pass or fail — both register
-   the check name with GitHub).
-3. Return to **Settings → Branches → Branch protection rules → master**.
-4. In the **Status checks** search box, type `check-pr-title` — it should now
-   appear and can be added as a required check.
+If you need to re-add it via GH UI: open any PR against `master`, let the
+workflow run, then go to **Settings → Branches → master → Edit → Status checks**.
 
-### CODEOWNERS review requirement
+### The script already includes this check
 
-GitHub enforces CODEOWNERS reviews only when **Require review from Code Owners**
-is enabled under the pull request protection settings. Enable this alongside
-the approval count setting on both `master` and `develop` if desired.
+`scripts/apply-branch-protection.sh` sets `Validate PR title (Conventional Commits)`
+by name — this works via API even before the first UI run.
+
+### CODEOWNERS
+
+`require_code_owner_reviews: true` is set, which means every PR must be
+approved by the owner listed in `.github/CODEOWNERS` for the changed paths.
+Currently `@EForce11` owns all paths.
