@@ -16,16 +16,16 @@ type SystemMetrics struct {
 	// Timestamp is the Unix epoch (seconds) when the snapshot was taken.
 	Timestamp int64
 
-	// CPUPercent is the overall CPU utilisation in the range [0, 100].
+	// CPUPercent is the overall CPU utilization in the range [0, 100].
 	CPUPercent float64
 
-	// MemoryPercent is the virtual-memory utilisation in the range [0, 100].
+	// MemoryPercent is the virtual-memory utilization in the range [0, 100].
 	MemoryPercent float64
 
 	// MemoryUsedMB is the number of megabytes currently in use.
 	MemoryUsedMB uint64
 
-	// DiskPercent is the root filesystem utilisation in the range [0, 100].
+	// DiskPercent is the root filesystem utilization in the range [0, 100].
 	DiskPercent float64
 
 	// DiskUsedGB is the number of gigabytes used on the root filesystem.
@@ -56,7 +56,7 @@ func NewMetricsCollector(interval time.Duration) *MetricsCollector {
 }
 
 // Start launches a background goroutine that performs an immediate collection
-// and then repeats every mc.interval until ctx is cancelled.
+// and then repeats every mc.interval until ctx is canceled.
 func (mc *MetricsCollector) Start(ctx context.Context) {
 	go func() {
 		// Collect immediately so the first metric is available without delay.
