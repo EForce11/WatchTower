@@ -4,13 +4,16 @@
 
 **Enterprise-grade Extended Detection and Response — open, auditable, self-hosted.**
 
-[![CI](https://github.com/EForce11/WatchTower/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/EForce11/WatchTower/actions/workflows/ci.yml)
+[![CI](https://github.com/EForce11/WatchTower/actions/workflows/core-check.yml/badge.svg)](https://github.com/EForce11/WatchTower/actions/workflows/core-check.yml)
 [![CodeQL](https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml/badge.svg)](https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml)
 [![Go Version](https://img.shields.io/badge/go-1.24-00ADD8?logo=go)](https://go.dev/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Release](https://img.shields.io/github/v/release/EForce11/WatchTower?include_prereleases)](https://github.com/EForce11/WatchTower/releases)
 
 </div>
+
+> ⚠️ **[WORK IN PROGRESS - UNDER MAJOR ARCHITECTURAL REFACTORING]**
+> 
+> The WatchTower core engine is currently undergoing a complete structural redesign. We are refactoring the codebase to fully leverage Go's native concurrency models (`goroutines` and `channels`) for high-throughput packet analysis and XDR simulation.
 
 ---
 
