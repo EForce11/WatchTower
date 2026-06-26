@@ -1,4 +1,4 @@
-.PHONY: proto build test integration-test integration-test-race clean run-core run-sentry run-turret run-interceptor dev-deps fmt lint cover cover-html check-coverage help all
+.PHONY: proto build test integration-test integration-test-race clean proto-clean run-core run-sentry run-turret run-interceptor dev-deps fmt lint cover cover-html check-coverage help all
 
 # Default target
 all: build
@@ -6,7 +6,9 @@ all: build
 # Compile protobuf
 proto:
 	@echo "🔨 Compiling protobuf..."
-	protoc --go_out=. --go-grpc_out=. pkg/protocol/agent.proto
+	protoc --go_out=. --go_opt=module=github.com/EForce11/WatchTower \
+	       --go-grpc_out=. --go-grpc_opt=module=github.com/EForce11/WatchTower \
+	       pkg/protocol/agent.proto
 	@echo "✅ Protobuf compiled"
 
 # Build all binaries
@@ -36,12 +38,17 @@ integration-test-race:
 	go test -v -race ./test/integration/
 	@echo "✅ Integration test passed (no races)"
 
-# Clean build artifacts
+# Clean build artifacts (preserves committed .pb.go files)
 clean:
 	@echo "🧹 Cleaning..."
 	rm -f wt-core wt-sentry wt-cli wt-turret wt-interceptor
-	rm -f pkg/protocol/*.pb.go
 	@echo "✅ Clean complete"
+
+# Clean everything including generated protobuf code (use before proto regeneration)
+proto-clean:
+	@echo "🧹 Cleaning protobuf generated code..."
+	rm -f pkg/protocol/*.pb.go
+	@echo "✅ Protobuf clean complete"
 
 # Run Core server
 run-core: build
