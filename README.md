@@ -1,6 +1,10 @@
 # WatchTower XDR
 
 <div align="center">
+  
+<p align="center">
+  <img src="assets/banner.png" alt="WatchTower XDR Banner" width="100%">
+</p>
 
   **Enterprise-grade Extended Detection and Response — open, auditable, self-hosted.**
 
@@ -13,10 +17,6 @@
   </p>
 
 </div>
-
-<p align="center">
-  <img src="assets/banner.png" alt="WatchTower XDR Banner" width="100%">
-</p>
 
 ---
 
