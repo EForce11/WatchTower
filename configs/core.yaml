@@ -1,0 +1,11 @@
+# WatchTower Core Configuration
+# Copy this file and adjust values for your environment.
+# Usage: ./wt-core --config configs/core.yaml
+
+server:
+  # gRPC listen address (host:port or :port for all interfaces)
+  listen_address: ":50051"
+
+log:
+  # Minimum log level: debug, info, warn, error
+  level: "info"

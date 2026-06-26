@@ -1,4 +1,4 @@
-.PHONY: proto build test integration-test integration-test-race clean run-core run-sentry dev-deps fmt lint cover cover-html check-coverage help all
+.PHONY: proto build test integration-test integration-test-race clean run-core run-sentry run-turret run-interceptor dev-deps fmt lint cover cover-html check-coverage help all
 
 # Default target
 all: build
@@ -14,6 +14,8 @@ build: proto
 	@echo "🔨 Building binaries..."
 	go build -o wt-core cmd/wt-core/main.go
 	go build -o wt-sentry cmd/wt-sentry/main.go
+	go build -o wt-turret cmd/wt-turret/main.go
+	go build -o wt-interceptor cmd/wt-interceptor/main.go
 	@echo "✅ Build complete"
 
 # Run all tests
@@ -37,7 +39,7 @@ integration-test-race:
 # Clean build artifacts
 clean:
 	@echo "🧹 Cleaning..."
-	rm -f wt-core wt-sentry wt-cli
+	rm -f wt-core wt-sentry wt-cli wt-turret wt-interceptor
 	rm -f pkg/protocol/*.pb.go
 	@echo "✅ Clean complete"
 
@@ -50,6 +52,16 @@ run-core: build
 run-sentry: build
 	@echo "🚀 Starting WatchTower Sentry..."
 	./wt-sentry
+
+# Run Turret agent (stub)
+run-turret: build
+	@echo "🚀 Starting WatchTower Turret..."
+	./wt-turret
+
+# Run Interceptor agent (stub)
+run-interceptor: build
+	@echo "🚀 Starting WatchTower Interceptor..."
+	./wt-interceptor
 
 # Install development dependencies
 dev-deps:
@@ -97,22 +109,24 @@ help:
 	@echo "WatchTower XDR - Makefile Commands"
 	@echo ""
 	@echo "Build:"
-	@echo "  make build           - Build all binaries"
-	@echo "  make proto           - Compile protobuf"
-	@echo "  make clean           - Remove build artifacts"
+	@echo "  make build              - Build all binaries"
+	@echo "  make proto              - Compile protobuf"
+	@echo "  make clean              - Remove build artifacts"
 	@echo ""
 	@echo "Run:"
-	@echo "  make run-core        - Start Core server"
-	@echo "  make run-sentry      - Start Sentry agent"
+	@echo "  make run-core           - Start Core server"
+	@echo "  make run-sentry         - Start Sentry agent"
+	@echo "  make run-turret         - Start Turret agent (stub)"
+	@echo "  make run-interceptor    - Start Interceptor agent (stub)"
 	@echo ""
 	@echo "Test:"
-	@echo "  make test             - Run all tests"
-	@echo "  make integration-test  - Run integration test"
-	@echo "  make cover            - Generate coverage report (terminal)"
-	@echo "  make cover-html       - Open coverage report in browser"
-	@echo "  make check-coverage   - Verify coverage meets 50%% threshold"
+	@echo "  make test               - Run all tests"
+	@echo "  make integration-test   - Run integration test"
+	@echo "  make cover              - Generate coverage report (terminal)"
+	@echo "  make cover-html         - Open coverage report in browser"
+	@echo "  make check-coverage     - Verify coverage meets 75%% threshold"
 	@echo ""
 	@echo "Development:"
-	@echo "  make dev-deps         - Install dev dependencies"
-	@echo "  make fmt              - Format code"
-	@echo "  make lint             - Lint code"
+	@echo "  make dev-deps           - Install dev dependencies"
+	@echo "  make fmt                - Format code"
+	@echo "  make lint               - Lint code"

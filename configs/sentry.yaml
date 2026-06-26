@@ -1,0 +1,23 @@
+# WatchTower Sentry Configuration
+# Copy this file and adjust values for your environment.
+# Usage: ./wt-sentry --config configs/sentry.yaml
+
+agent:
+  # Unique identifier for this Sentry instance
+  id: "sentry-001"
+
+core:
+  # Address of the WatchTower Core gRPC server
+  address: "localhost:50051"
+  # Maximum number of connection retry attempts
+  max_retries: 3
+
+heartbeat:
+  # Interval between heartbeat messages (seconds)
+  interval_seconds: 10
+  # Timeout for each heartbeat RPC call (seconds)
+  timeout_seconds: 5
+
+log:
+  # Minimum log level: debug, info, warn, error
+  level: "info"

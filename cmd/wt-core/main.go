@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -11,10 +12,9 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/EForce11/WatchTower/internal/config"
 	pb "github.com/EForce11/WatchTower/pkg/protocol"
 )
-
-const port = ":50051"
 
 type server struct {
 	pb.UnimplementedAgentServiceServer
@@ -37,8 +37,19 @@ func (s *server) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.H
 }
 
 func main() {
-	// 1. Create TCP listener on :50051
-	lis, err := net.Listen("tcp", port) // #nosec G102 -- intentional: gRPC server must accept connections from all interfaces
+	// Parse --config flag (optional).
+	configPath := flag.String("config", "configs/core.yaml", "Path to YAML configuration file")
+	flag.Parse()
+
+	// Load configuration; fall back to built-in defaults when the file is absent.
+	cfg, err := config.LoadCoreConfig(*configPath)
+	if err != nil {
+		log.Printf("WARNING: could not load config from %s: %v — using defaults", *configPath, err)
+		cfg = config.DefaultCoreConfig()
+	}
+
+	// 1. Create TCP listener
+	lis, err := net.Listen("tcp", cfg.Server.ListenAddress) // #nosec G102 -- intentional: gRPC server must accept connections from all interfaces
 	if err != nil {
 		log.Fatalf("Failed to listen: %v", err)
 	}
@@ -49,7 +60,7 @@ func main() {
 	// 3. Register AgentService
 	pb.RegisterAgentServiceServer(grpcServer, &server{})
 
-	log.Println("Starting WatchTower Core on :50051")
+	log.Printf("Starting WatchTower Core on %s", cfg.Server.ListenAddress)
 
 	// 4. Start server in goroutine
 	go func() {
