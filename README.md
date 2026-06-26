@@ -14,6 +14,10 @@
 
 </div>
 
+<p align="center">
+  <img src="assets/banner.png" alt="WatchTower XDR Banner" width="100%">
+</p>
+
 ---
 
 ## What is WatchTower XDR?
