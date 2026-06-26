@@ -3,13 +3,15 @@
 <div align="center">
 
   **Enterprise-grade Extended Detection and Response — open, auditable, self-hosted.**
+
   <p align="center">
-    [![CI](https://github.com/EForce11/WatchTower/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/EForce11/WatchTower/actions/workflows/ci.yml)
-    [![CodeQL](https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml/badge.svg)](https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml)
-    [![Go Version](https://img.shields.io/badge/go-1.24-00ADD8?logo=go)](https://go.dev/)
-    [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-    [![Release](https://img.shields.io/github/v/release/EForce11/WatchTower?include_prereleases)](https://github.com/EForce11/WatchTower/releases)
+    <a href="https://github.com/EForce11/WatchTower/actions/workflows/ci.yml"><img src="https://github.com/EForce11/WatchTower/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+    <a href="https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml"><img src="https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+    <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-1.24-00ADD8?logo=go" alt="Go Version"></a>
+    <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
+    <a href="https://github.com/EForce11/WatchTower/releases"><img src="https://img.shields.io/github/v/release/EForce11/WatchTower?include_prereleases" alt="Release"></a>
   </p>
+
 </div>
 
 ---
