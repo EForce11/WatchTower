@@ -30,18 +30,18 @@ WatchTower is an **open-source XDR (Extended Detection and Response)** platform 
 ┌─────────────────────────────────────────────────────────────────┐
 │                        WatchTower XDR                           │
 │                                                                 │
-│  ┌──────────────┐   gRPC / mTLS   ┌──────────────────────────┐ │
-│  │  wt-sentry   │ ◄─────────────► │       wt-core            │ │
-│  │   (Agent)    │  Heartbeat 10s  │   (Central Server)       │ │
-│  │              │                 │   Port :50051            │ │
-│  │ - Log watch  │                 │ - Agent registry         │ │
-│  │ - Pattern    │                 │ - Event correlation      │ │
-│  │   matching   │                 │ - Alert dispatch         │ │
-│  └──────────────┘                 └──────────────────────────┘ │
+│  ┌──────────────┐   gRPC / mTLS   ┌──────────────────────────┐  │
+│  │  wt-sentry   │ ◄─────────────► │       wt-core            │  │
+│  │   (Agent)    │  Heartbeat 10s  │   (Central Server)       │  │
+│  │              │                 │   Port :50051            │  │
+│  │ - Log watch  │                 │ - Agent registry         │  │
+│  │ - Pattern    │                 │ - Event correlation      │  │
+│  │   matching   │                 │ - Alert dispatch         │  │
+│  └──────────────┘                 └──────────────────────────┘  │
 │                                                                 │
-│  ┌───────────────┐                                             │
-│  │    wt-cli     │  ← unified management interface (Phase 3+) │
-│  └───────────────┘                                             │
+│  ┌───────────────┐                                              │
+│  │    wt-cli     │  ← unified management interface (Phase 3+)   │
+│  └───────────────┘                                              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
