@@ -1,3 +1,7 @@
+<p>
+  <img src="assets/watchtower-logo.png" align="right" width="120" alt="WatchTower Logo">
+</p>
+
 # WatchTower XDR
 
 <div align="center">
