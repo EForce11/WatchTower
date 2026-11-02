@@ -1,10 +1,63 @@
-# 🏛️ WatchTower XDR - System Design Document v2.1 (UNIVERSAL ARCHITECTURE)
+# 🏛️ WatchTower XDR - System Design Document v2.2 (UNIVERSAL ARCHITECTURE)
 
 **Project Status:** Production-Ready Architecture ✅ | Code: Pre-Release (v0.x.0)  
-**Last Updated:** 2026-02-08 (Full English translation, optimized roadmap)  
+**Last Updated:** 2026-02-08 (AI-Supported SOC integration & full document navigation)  
 **Architect(s):** Emir Furkan Ulu (Product Owner) + Claude (Technical Architect)  
 **Peer Review:** Gemini (Performance & Implementation Analysis)  
 **Slogan:** "Enterprise-grade XDR for everyone, everywhere."
+
+---
+
+## 📋 Table of Contents
+
+- [🔍 Version History](#-version-history)
+- [📊 Project Versioning Strategy](#-project-versioning-strategy)
+- [1. Executive Summary](#1-executive-summary)
+  - [1.1 Project Vision](#11-project-vision)
+  - [1.2 Core Principles](#12-core-principles)
+  - [1.3 Technology Stack (NON-NEGOTIABLE)](#13-technology-stack-non-negotiable)
+  - [1.4 Deployment Scope](#14-deployment-scope)
+- [2. System Architecture](#2-system-architecture)
+  - [2.1 High-Level Topology](#21-high-level-topology)
+  - [2.2 Component Communication Matrix](#22-component-communication-matrix)
+  - [2.3 Trust Boundaries](#23-trust-boundaries)
+- [3. Component Specifications](#3-component-specifications)
+  - [3.1 WT-Core (The Brain)](#31-wt-core-the-brain)
+  - [3.2 WT-Sentry (The Eye)](#32-wt-sentry-the-eye)
+  - [3.3 WT-Turret (The Fist)](#33-wt-turret-the-fist)
+  - [3.4 WT-Interceptor (The Gatekeeper)](#34-wt-interceptor-the-gatekeeper--new-v12)
+  - [3.5 AI-Supported SOC (The Virtual Analyst / WT-Advisor)](#35-ai-supported-soc-the-virtual-analyst--wt-advisor--new-v22)
+- [4. Data Management](#4-data-management)
+  - [4.1 Database Schema (PostgreSQL + TimescaleDB)](#41-database-schema-postgresql--timescaledb)
+  - [4.2 Data Retention & IP Masking](#42-data-retention--ip-masking)
+- [5. Security & Compliance](#5-security--compliance)
+  - [5.1 Authentication Chain](#51-authentication-chain)
+  - [5.2 Network Security](#52-network-security)
+  - [5.3 Secrets Management](#53-secrets-management)
+- [6. Operational Procedures](#6-operational-procedures)
+  - [6.1 Initial Deployment](#61-initial-deployment)
+  - [6.2 Day-to-Day Operations](#62-day-to-day-operations)
+  - [6.3 Incident Response](#63-incident-response)
+  - [6.4 Maintenance Procedures](#64-maintenance-procedures--new-v11)
+- [7. Development Roadmap](#7-development-roadmap)
+  - [Phase 0: Preparation (Week 1)](#phase-0-preparation-week-1)
+  - [Phase 1: Watcher (Weeks 2-3)](#phase-1-watcher-weeks-2-3)
+  - [Phase 2: Communication & Monitoring (Week 4)](#phase-2-communication--monitoring-week-4)
+  - [Phase 3: Turret (Weeks 5-6)](#phase-3-turret-weeks-5-6--caution)
+  - [Phase 4: Brain - Anomaly Engine (Weeks 7-8)](#phase-4-brain-anomaly-engine-weeks-7-8)
+  - [Phase 5: Shield - Network IDS (Deferred)](#phase-5-shield-network-ids---deferred)
+  - [Phase 6: Gatekeeper - Application Layer (Weeks 9-11)](#phase-6-gatekeeper-application-layer-weeks-9-11)
+  - [Phase 7: Polish & Release (Week 12)](#phase-7-polish--release-week-12)
+  - [Phase 8: AI-Supported SOC & Virtual Analyst (Weeks 13-15)](#phase-8-ai-supported-soc--virtual-analyst-weeks-13-15--new-v22)
+- [8. Appendices](#8-appendices)
+  - [8.1 Glossary](#81-glossary)
+  - [8.2 Reference Links](#82-reference-links)
+  - [8.3 Testing Checklist](#83-testing-checklist)
+  - [8.4 wt-cli PKI Commands Reference](#84-wt-cli-pki-commands-reference--new-v11)
+  - [8.5 wt-cli Agent Management Commands](#85-wt-cli-agent-management-commands--new-v12)
+  - [8.6 Technology Decision Matrix](#86-technology-decision-matrix--new-v20)
+  - [8.7 Development Workflow & Testing Strategy](#87-development-workflow--testing-strategy--new-v20)
+- [🎯 Final Checklist (v2.2)](#-final-checklist-v21)
 
 ---
 
@@ -30,23 +83,29 @@
 13. ✅ Development Workflow - VMware + Multipass testing strategy
 14. ✅ Versioning Clarity - v0.x.0 (code) vs v2.0.0 (docs)
 
-### v2.0 → v2.1 (Complete English Translation & Roadmap Optimization) ⭐ CURRENT
+### v2.0 → v2.1 (Complete English Translation & Roadmap Optimization)
 15. ✅ **Full English Translation** - No Turkish except proper nouns
 16. ✅ **Author Name Correction** - Emir Furkan Ulu (was incorrectly "Emre")
 17. ✅ **Optimized Development Roadmap** - Clearer phase breakdown
 18. ✅ **Implementation Status** - GitHub repository created
 
-**Key Achievement (v2.1):** WatchTower documentation is now fully internationalized and implementation-ready with a GitHub repository established.
+### v2.1 → v2.2 (AI-Supported SOC & Navigation Architecture) ⭐ CURRENT
+19. ✅ **AI-Supported SOC Architecture** - WT-Advisor Virtual Analyst for autonomous triage, MITRE ATT&CK mapping, and SOAR playbooks
+20. ✅ **Comprehensive Table of Contents** - Placed at the document top for unified navigation
+21. ✅ **Human-in-the-Loop SOAR** - Guided remediation workflows with safety guardrails and explainable triage
+22. ✅ **Privacy-Preserving Local AI** - Air-gapped SLM/LLM support (Ollama/vLLM) with PII redaction
+
+**Key Achievement (v2.2):** WatchTower now combines mathematical anomaly detection with an AI-Supported Virtual SOC Analyst (WT-Advisor), bridging the gap between raw telemetry and actionable, explainable security response.
 
 ---
 
 ## 📊 Project Versioning Strategy
 
-**Documentation Version:** v2.1.0 (this document)
+**Documentation Version:** v2.2.0 (this document)
 - Tracks architectural evolution
 - Major version = significant design changes
 - Minor version = translations, optimizations, corrections
-- Current: v2.1.0 (fully English, optimized)
+- Current: v2.2.0 (AI-Supported SOC, comprehensive navigation)
 
 **Software Version:** v0.1.0-alpha (code in repository)
 - Follows semantic versioning
@@ -64,20 +123,8 @@ v0.5.0 - Phase 3 complete (Turret IPS)
 v0.6.0 - Phase 4 complete (Anomaly Engine)
 v0.9.0 - Phase 6 complete (Interceptor + Installer)
 v1.0.0 - First production release 🚀
+v1.1.0 - Phase 8 complete (AI-Supported SOC & WT-Advisor)
 ```
-
----
-
-## 📋 Table of Contents
-
-1. [Executive Summary](#executive-summary)
-2. [System Architecture](#system-architecture)
-3. [Component Specifications](#component-specifications)
-4. [Data Management](#data-management)
-5. [Security & Compliance](#security--compliance)
-6. [Operational Procedures](#operational-procedures)
-7. [Development Roadmap](#development-roadmap)
-8. [Appendices](#appendices)
 
 ---
 
@@ -92,7 +139,7 @@ v1.0.0 - First production release 🚀
 - **Cloud-Agnostic:** Works on AWS, DigitalOcean, Hetzner, on-premise, or any Linux
 - **Modular Architecture:** Each component does ONE thing well
 - **Fail-Safe by Design:** Offline resilience, no single point of failure
-- **Explainable Security:** Every decision backed by math, not black-box AI
+- **Explainable Security & Human-in-the-Loop AI:** Core detection and enforcement are mathematically deterministic and auditable; AI acts as an assistant for Tier-1 SOC triage, MITRE ATT&CK correlation, and human-authorized remediation without uncontrolled black-box actions
 - **Universal Deployment:** From Raspberry Pi to enterprise data centers
 
 ### 1.3 Technology Stack (NON-NEGOTIABLE)
@@ -251,6 +298,12 @@ Dashboard:  Grafana Cloud - Centralized monitoring
           │  │  │  - Update Orchestrator       │  │  │
           │  │  │  - Health Monitor             │  │  │
           │  │  └──────────────────────────────┘  │  │
+          │  │  ┌──────────────────────────────┐  │  │
+          │  │  │  AI SOC Assistant (WT-Advisor)│  │  │
+          │  │  │  - Incident Triage & RCA     │  │  │
+          │  │  │  - MITRE ATT&CK Mapping      │  │  │
+          │  │  │  - Guided SOAR Playbooks     │  │  │
+          │  │  └──────────────────────────────┘  │  │
           │  └────────────┬─────────────────────┘  │
           │               │                        │
           │  ┌────────────▼─────────────────────┐  │
@@ -284,6 +337,7 @@ Dashboard:  Grafana Cloud - Centralized monitoring
           │  - SSH Access (Core)           │
           │  - Grafana (Browser)           │
           │  - wt-cli (Management Tool)    │
+          │  - wt-cli soc (AI SOC Analyst) │
           │  - Installer Generation        │
           └────────────────────────────────┘
 ```
@@ -310,6 +364,8 @@ Layer 3 (Network):       WT-Guard (Future) → Packet analysis
 | Admin | Core | SSH | 22 | WireGuard + pubkey | Management |
 | Admin | Grafana | HTTPS | 8080 | WireGuard + BasicAuth | Monitoring |
 | Core-Primary | Core-Standby | gRPC | 50052 | mTLS | Heartbeat |
+| Core (AI SOC) | Local LLM / Provider | HTTP / Unix Socket | 11434 / 8000 | Token / Localhost | Triage & incident analysis |
+| Admin (wt-cli) | Core (AI SOC) | gRPC / TLS | 50051 | mTLS + Token | Interactive SOC investigation & playbook approval |
 
 ### 2.3 Trust Boundaries
 
@@ -1277,6 +1333,188 @@ sentry:
   socket: "/tmp/wt/wt-sentry.sock"
   report_threshold: 50
 ```
+
+---
+
+### 3.5 AI-Supported SOC (The Virtual Analyst / WT-Advisor) ⭐ NEW (v2.2)
+
+**Binary / Service Name:** `wt-advisor` (Standalone daemon or embedded in `wt-core`)  
+**Deployment:** Co-located on Management Server (alongside WT-Core)  
+**Privileges:** Standard user (Read-only access to TimescaleDB & event streams)  
+**Resources:**  
+- *Embedded / Remote API Mode:* 256MB RAM, 0.5 CPU  
+- *Local SLM Mode (e.g., Llama-3.2-3B / Qwen-2.5-7B via Ollama):* 4GB-8GB RAM, 4 CPU cores (or entry GPU)  
+**Philosophy:** *"Deterministic math for detection, AI for context and narrative synthesis, human authorization for containment."*
+
+#### 3.5.1 Purpose & Motivation
+
+Small-to-medium businesses (SMBs) and lean engineering teams face two critical security hurdles:
+1. **Alert Fatigue:** A single targeted port scan or SQLi probe triggers dozens of disjointed alerts across L3, L4, and L7 layers (Sentry CPU anomalies, Turret connection bursts, Interceptor HTTP blocks).
+2. **The "Tier-1 Analyst" Talent Gap:** Raw logs (`"Z-Score 4.2 on eth0 rx_bytes"`, `"POST /wp-login.php 403"`) require time-consuming manual triage and domain expertise to distinguish opportunistic noise from an active Advanced Persistent Threat (APT).
+
+The **AI-Supported SOC** serves as an autonomous **24/7 Virtual Tier-1/Tier-2 Security Analyst**:
+- **Consolidates & Synthesizes:** Fuses low-level telemetry from Sentry, Interceptor, and Turret into unified **Incident Narratives**.
+- **Maps Attack Surface:** Identifies attacker progression across the **MITRE ATT&CK** matrix in real time.
+- **Recommends Executable Remediation:** Produces vetted **SOAR playbooks** (e.g. precise Turret bans, rate limit rule adjustments, credential revocations) for human operator approval.
+- **Explains Why:** Translates complex mathematical anomalies into plain, actionable explanations for system administrators.
+
+#### 3.5.2 Architecture & Data Flow
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                           WT-ADVISOR (AI-SUPPORTED SOC)                          │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│   ┌────────────────────┐    ┌────────────────────┐    ┌──────────────────────┐   │
+│   │  WT-Sentry (HIDS)  │    │  WT-Turret (IPS)   │    │ WT-Interceptor (WAF) │   │
+│   │  Host Logs, FIM    │    │  Drop/Ban Events   │    │ L7 HTTP Anomalies    │   │
+│   └─────────┬──────────┘    └─────────┬──────────┘    └──────────┬───────────┘   │
+│             │                         │                          │               │
+│             └───────────────────┐     │     ┌────────────────────┘               │
+│                                 ▼     ▼     ▼                                    │
+│                       ┌────────────────────────────┐                             │
+│                       │  Incident Event Windowing  │                             │
+│                       │  (5-15 min sliding buffer) │                             │
+│                       └─────────────┬──────────────┘                             │
+│                                     │                                            │
+│                                     ▼                                            │
+│                       ┌────────────────────────────┐                             │
+│                       │ Privacy Redaction Filter   │                             │
+│                       │ - Strips PII, Auth tokens  │                             │
+│                       │ - Masks internal subnets   │                             │
+│                       └─────────────┬──────────────┘                             │
+│                                     │                                            │
+│                                     ▼                                            │
+│                       ┌────────────────────────────┐                             │
+│                       │  RAG & Knowledge Base      │                             │
+│                       │  - MITRE ATT&CK JSON db    │                             │
+│                       │  - TimescaleDB baselines   │                             │
+│                       │  - WatchTower Playbook Lib │                             │
+│                       └─────────────┬──────────────┘                             │
+│                                     │                                            │
+│                                     ▼                                            │
+│                       ┌────────────────────────────┐                             │
+│                       │ Pluggable LLM/SLM Engine   │                             │
+│                       │ - Local: Ollama/vLLM (SLM) │                             │
+│                       │ - Cloud: Gemini / OpenAI   │                             │
+│                       └─────────────┬──────────────┘                             │
+│                                     │                                            │
+│               ┌─────────────────────┴─────────────────────┐                      │
+│               ▼                                           ▼                      │
+│   ┌───────────────────────────────┐           ┌──────────────────────────────┐   │
+│   │   Incident Narrative & RCA    │           │    Guided SOAR Playbook      │   │
+│   │ - Attack Timeline & Kill Chain│           │ - Suggested Turret Ban       │   │
+│   │ - MITRE Technique Tags        │           │ - Firewall / Nginx rule patch│   │
+│   │ - False Positive Probability  │           │ - Rollback plan              │   │
+│   └───────────────┬───────────────┘           └──────────────┬───────────────┘   │
+│                   │                                          │                   │
+│                   ▼                                          ▼                   │
+│       ┌───────────────────────┐                  ┌───────────────────────┐       │
+│       │ Alerting & Dashboard  │                  │  Human-in-the-Loop    │       │
+│       │ (Grafana, ntfy, mail) │                  │  Approval via wt-cli  │       │
+│       └───────────────────────┘                  └───────────────────────┘       │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 3.5.3 Core Capabilities
+
+##### A. Autonomous Incident Triaging & Correlation
+- Correlates asynchronous events across independent hosts and layers.
+- Example: An attacker scans ports on host A, attempts SQL injection against host B's reverse proxy via Interceptor, and triggers an outbound network spike on host C. The AI engine recognizes the common source subnet / signature and binds them into `INC-2026-0812` instead of generating 30 fragmented tickets.
+
+##### B. MITRE ATT&CK Mapping
+- Telemetry patterns are matched against MITRE tactics:
+  - `T1190` - Exploit Public-Facing Application (SQLi / path traversal blocked by Interceptor)
+  - `T1110.001` - Brute Force: Password Guessing (auth.log failures captured by Sentry)
+  - `T1046` - Network Service Discovery (SYN scans caught by Turret)
+  - `T1071.001` - Application Layer Protocol: Web Protocols (Command & Control callbacks)
+- Results are tagged directly in the TimescaleDB incident table and displayed on the Grafana ATT&CK Navigator matrix.
+
+##### C. Guided & Human-in-the-Loop SOAR (Playbooks)
+To avoid dangerous automation mishaps, remediation follows strict tiers:
+- **Informative:** AI summarizes root cause and logs evidence.
+- **Recommended (Default):** AI constructs the exact CLI command or configuration patch and stages it for administrator approval:
+  ```bash
+  # Proposed Playbook #PB-104:
+  wt-turret ban 198.51.100.42 --duration 12h --reason "Coordinated brute force & SQLi (INC-2026-0812)"
+  wt-interceptor rule add --path "/api/v1/auth" --rate-limit "5/min"
+  ```
+- **Autonomous (Emergency DEFCON L4 Only):** If an active exfiltration pattern meets predefined mathematical criteria (z-score > 5.0 + known malicious C2 IP), Turret executes immediate containment and notifies the operator post-facto.
+
+##### D. Privacy-Preserving & Air-Gapped Operation
+- **Zero Sensitive Data Leakage:** The internal `Privacy Sanitizer` regex engine removes passwords, JWT bearer tokens, session cookies, and private IP blocks before prompts are built.
+- **Air-Gapped / Offline Ready:** Fully supports local Small Language Models (SLMs) via Ollama, llama.cpp, or vLLM running on the management host. No external internet connectivity is required.
+
+#### 3.5.4 Configuration Example
+
+```yaml
+# /etc/watchtower/soc.yaml
+soc:
+  enabled: true
+  mode: "hybrid"  # "advisory" (read-only), "guided" (proposes playbooks), "full" (auto-remediation on L4)
+  
+  # Inference Provider Options
+  inference:
+    provider: "local_ollama"   # "local_ollama" | "openai_compatible" | "gemini" | "disabled"
+    endpoint: "http://127.0.0.1:11434"
+    model: "llama3.2:3b"       # Fast, low-footprint model suitable for edge/server CPU
+    timeout: "15s"
+    temperature: 0.1           # Deterministic, non-creative output
+    max_tokens: 1024
+
+  privacy:
+    redact_passwords: true
+    redact_authorization_headers: true
+    mask_internal_ips: true
+    allow_raw_query_strings: false
+
+  triage:
+    sliding_window: "10m"
+    min_severity_to_analyze: 2 # Only triage L2 (Elevated) and above
+    auto_deduplicate: true
+    mitre_enrichment: true
+
+  playbooks:
+    require_human_approval: true
+    approval_timeout: "30m"
+    notification_webhook: "https://ntfy.sh/watchtower-soc-alerts"
+```
+
+#### 3.5.5 CLI Interaction (`wt-cli soc`)
+
+Administrators can inspect, query, and approve AI-generated analysis directly from the terminal:
+
+```bash
+# 1. List active incidents analyzed by AI-SOC
+$ wt-cli soc incidents
+
+ID             SEVERITY   TACTIC                SUMMARY                                     APPROVAL
+INC-2026-041   HIGH (L3)  T1190 (Exploit App)   Repeated SQLi followed by port probe        PENDING
+INC-2026-042   LOW (L1)   T1110 (Brute Force)   Single IP failed 4 SSH logins in 10m        AUTO-RESOLVED
+
+# 2. View AI-generated incident report & root cause narrative
+$ wt-cli soc explain INC-2026-041
+
+[INCIDENT SUMMARY]
+At 14:22 UTC, remote host 203.0.113.19 initiated a rapid SQL injection probe against
+'/wp-login.php' on web-server-1 (blocked by WT-Interceptor). 45 seconds later, the same
+subnet initiated an SSH connection attempt against management port 2222 (detected by Sentry).
+Pattern indicates automated vulnerability scanning followed by credential guessing.
+
+[MITRE ATT&CK MAPPING]
+- Initial Access: T1190 (Exploit Public-Facing Application)
+- Credential Access: T1110.001 (Password Guessing)
+
+[RECOMMENDED ACTION]
+Action: Ban 203.0.113.0/24 on all edge sentries via Turret for 24 hours.
+Command: wt-turret ban 203.0.113.0/24 --duration 24h
+
+# 3. Approve suggested remediation playbook
+$ wt-cli soc approve INC-2026-041
+✅ Playbook executed successfully. 203.0.113.0/24 banned across 3 agents.
+```
+
+---
 
 
 ---
@@ -2262,36 +2500,54 @@ v1.0.0 Release Announcement:
   - Twitter/LinkedIn announcement
 ```
 
----    - Rate limiting per-path
-    - Custom error pages
-    - GeoIP filtering (optional)
+---
+
+### Phase 8: AI-Supported SOC & Virtual Analyst (Weeks 13-15) ⭐ NEW (v2.2)
+```
+Goals:
+  - WT-Advisor Virtual Analyst component
+  - Autonomous multi-source alert triage & deduplication
+  - MITRE ATT&CK mapping engine
+  - Guided SOAR playbooks (Turret ban, Interceptor rule patch)
+  - Privacy sanitizer (PII & auth token redaction)
+  - Local SLM integration (Ollama / vLLM) & remote LLM provider interface
+  - wt-cli soc CLI subcommands
+
+Components:
+  Advisor Engine:
+    - Sliding window incident aggregator (5-15m)
+    - PII & secret redactor
+    - Prompt builder with TimescaleDB RAG context
+    - Provider interface (local Ollama / remote Gemini/OpenAI API)
+    - Structured JSON output validator
   
-  Installer:
-    - Smart detection (Nginx presence)
-    - Auto-configuration (Hybrid vs Standalone)
-    - Zero-downtime deployment
-    - Rollback capability
+  SOAR Controller:
+    - Playbook generator (executable remediation steps)
+    - Human-in-the-Loop approval state machine
+    - Auto-rollback verification
   
-  Integration:
-    - Sentry ↔ Interceptor (L7 threat sharing)
-    - Turret ↔ Interceptor (shared blocklist)
-    - Core receives L7 threat data
-    - Grafana L7 metrics dashboard
+  CLI & Dashboard:
+    - wt-cli soc incidents
+    - wt-cli soc explain <id>
+    - wt-cli soc approve <id>
+    - Grafana MITRE ATT&CK heatmap dashboard
 
 Deliverables:
-  - cmd/wt-interceptor/main.go
-  - internal/waf/rules.go
-  - internal/ratelimit/limiter.go
-  - web/pages/*.html (block pages)
-  - wt-cli agent generate-installer
-  - Database: l7_events table
+  - internal/soc/advisor.go
+  - internal/soc/sanitizer.go
+  - internal/soc/mitre.go
+  - internal/soc/playbook.go
+  - cmd/wt-advisor/main.go (or embedded in cmd/wt-core)
+  - Database: soc_incidents and soc_playbooks tables
 
 Success Criteria:
-  - Simulate SQLi → Blocked + custom page
-  - Brute force /admin → Rate limited + challenge
-  - Cloudflare down → WatchTower protecting
-  - Performance: <5ms added latency (p99)
-  - One-click installer works on fresh + existing Nginx servers
+  - Simulate combined L4 + L7 attack (SSH brute force + SQLi probe):
+    * AI-SOC groups into single incident within 10 seconds
+    * Correctly maps to MITRE T1190 & T1110.001
+    * Generates human-readable incident summary
+    * Proposes correct wt-turret ban command
+  - Zero PII / secret leakage in LLM prompts (tested against token sanitizer suite)
+  - Local inference works 100% offline via Ollama (Llama-3.2-3B / Qwen-2.5-7B)
 ```
 
 ---
@@ -2303,6 +2559,11 @@ Success Criteria:
 | Term | Definition |
 |------|------------|
 | **XDR** | Extended Detection and Response |
+| **SOC** | Security Operations Center |
+| **SOAR** | Security Orchestration, Automation, and Response |
+| **SLM** | Small Language Model (e.g. 1B-8B parameter local model) |
+| **RAG** | Retrieval-Augmented Generation |
+| **RCA** | Root Cause Analysis |
 | **IDS** | Intrusion Detection System |
 | **IPS** | Intrusion Prevention System |
 | **HIDS** | Host-based IDS |
@@ -3233,6 +3494,7 @@ Output:
 - [x] One-Click Installer (smart detection)
 - [x] Custom Block Pages
 - [x] ML-Ready Architecture (Strategy Pattern)
+- [x] AI-Supported SOC (WT-Advisor Virtual Analyst & SOAR)
 - [x] Dynamic Service Discovery (Web UI)
 - [x] Technology Decision Matrix
 - [x] Development Workflow (VMware + Multipass)
@@ -3240,25 +3502,25 @@ Output:
 **Documentation Quality:**
 - [x] Enterprise-Grade ✅
 - [x] Fully English (no Turkish except proper nouns) ✅
-- [x] Versioning Clear (Code: v0.x.0 | Docs: v2.1.0) ✅
+- [x] Versioning Clear (Code: v0.x.0 | Docs: v2.2.0) ✅
 - [x] Testing Strategy (4-Level) ✅
 - [x] Development Roadmap Optimized ✅
 
 **Implementation Status:**
-1. ✅ Architecture v2.1 complete
+1. ✅ Architecture v2.2 complete
 2. ✅ GitHub repo created: watchtower-xdr
 3. ✅ Initial commit made
 4. ⏳ Phase 0 in progress: gRPC protocol
 5. ⏳ CI/CD setup (GitHub Actions)
 6. ⏳ VMware test topology (Core + 2 agents)
-7. ⏳ Phase 1-7 implementation (iterative)
+7. ⏳ Phase 1-8 implementation (iterative)
 
 ---
 
-**Document Version:** 2.1.0 (Fully Internationalized)  
+**Document Version:** 2.2.0 (AI-Supported SOC & Comprehensive Navigation)  
 **Code Version:** v0.1.0-alpha (in development)  
 **Created:** 2026-02-08  
-**Last Revised:** 2026-02-08 (English translation, roadmap optimization, author correction)  
+**Last Revised:** 2026-02-08 (AI-Supported SOC integration, top-level Table of Contents, Phase 8)  
 **Status:** Implementation Ready 🚀
 
 **Revision Summary:**
@@ -3266,10 +3528,11 @@ Output:
 - v1.1: Implementation feasibility (performance, automation, safety)
 - v1.2: Application layer protection (WT-Interceptor, installer, full XDR)
 - v2.0: Universal design (any cloud, ML-ready, dev workflow)
-- v2.1: **Full English translation, optimized roadmap, author correction**
+- v2.1: Full English translation, optimized roadmap, author correction
+- v2.2: **AI-Supported SOC (WT-Advisor), MITRE ATT&CK correlation, guided SOAR playbooks, comprehensive top Table of Contents**
 
-**Key Achievement (v2.1):** 
-WatchTower documentation is now fully internationalized and accessible to the global open-source community. The development roadmap has been optimized with clearer phase breakdowns and success criteria. GitHub repository has been created and initial development has begun.
+**Key Achievement (v2.2):** 
+WatchTower architecture now features an end-to-end AI-Supported SOC layer (WT-Advisor), empowering teams to correlate L3/L4/L7 threats automatically into plain-text incident narratives and MITRE ATT&CK tactics, backed by safe human-in-the-loop SOAR playbooks. The document is enhanced with a comprehensive top-level Table of Contents.
 
 **Production Readiness:**
 - ✅ Cloud-agnostic (no vendor lock-in)
