@@ -1,4 +1,4 @@
-.PHONY: proto proto-lint proto-check build test integration-test integration-test-race clean proto-clean run-core run-sentry run-interceptor dev-deps fmt lint cover cover-html check-coverage help all
+.PHONY: proto proto-lint proto-check build test integration-test integration-test-race clean run-core run-sentry dev-deps fmt lint cover cover-html check-coverage help all
 
 # Make `go install`ed tools (protoc-gen-go, protoc-gen-go-grpc) visible
 # even when $(go env GOPATH)/bin is not on the user's shell PATH.
@@ -52,14 +52,8 @@ integration-test-race:
 # Clean build artifacts (preserves committed .pb.go files)
 clean:
 	@echo "🧹 Cleaning..."
-	rm -f wt-core wt-sentry wt-cli wt-turret wt-interceptor
+	rm -f wt-core wt-sentry wt-cli wt-turret
 	@echo "✅ Clean complete"
-
-# Clean everything including generated protobuf code (use before proto regeneration)
-proto-clean:
-	@echo "🧹 Cleaning protobuf generated code..."
-	rm -f pkg/protocol/*.pb.go
-	@echo "✅ Protobuf clean complete"
 
 # Run Core server
 run-core: build
@@ -70,11 +64,6 @@ run-core: build
 run-sentry: build
 	@echo "🚀 Starting WatchTower Sentry..."
 	./wt-sentry
-
-# Run Interceptor agent (stub)
-run-interceptor: build
-	@echo "🚀 Starting WatchTower Interceptor..."
-	./wt-interceptor
 
 # Install development dependencies
 dev-deps:
@@ -131,7 +120,6 @@ help:
 	@echo "Run:"
 	@echo "  make run-core           - Start Core server"
 	@echo "  make run-sentry         - Start Sentry agent"
-	@echo "  make run-interceptor    - Start Interceptor agent (stub)"
 	@echo ""
 	@echo "Test:"
 	@echo "  make test               - Run all tests"

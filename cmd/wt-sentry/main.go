@@ -9,25 +9,27 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/golang/protobuf/ptypes/timestamp"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/EForce11/WatchTower/internal/config"
-	pb "github.com/EForce11/WatchTower/pkg/protocol"
+	synapsev1 "github.com/EForce11/WatchTower/pkg/synapse/v1"
 )
 
-func sendHeartbeat(client pb.AgentServiceClient, agentID string, timeout time.Duration) {
+// Version is injected at build time via ldflags (-X main.Version=...).
+var Version = "dev"
+
+func sendHeartbeat(client synapsev1.AgentServiceClient, agentID string, timeout time.Duration) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	now := time.Now()
-	req := &pb.HeartbeatRequest{
-		AgentId: agentID,
-		Timestamp: &timestamp.Timestamp{
-			Seconds: now.Unix(),
-			Nanos:   int32(now.Nanosecond()), // #nosec G115 -- Nanosecond() ∈ [0,999_999_999], always within int32 range
-		},
+	req := &synapsev1.HeartbeatRequest{
+		AgentId:       agentID,
+		Timestamp:     timestamppb.New(now),
+		AgentVersion:  Version,
+		CollectorTier: synapsev1.CollectorTier_COLLECTOR_TIER_C,
 	}
 
 	resp, err := client.Heartbeat(ctx, req)
@@ -88,7 +90,7 @@ func main() {
 
 	defer conn.Close()
 
-	client := pb.NewAgentServiceClient(conn)
+	client := synapsev1.NewAgentServiceClient(conn)
 
 	// Create a cancelable context for the heartbeat loop
 	ctx, cancel := context.WithCancel(context.Background())

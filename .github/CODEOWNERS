@@ -6,7 +6,7 @@
 * @EForce11
 
 # Protocol definitions — protobuf changes are breaking changes
-pkg/protocol/ @EForce11
+pkg/synapse/ @EForce11
 
 # CI/CD workflows — pipeline changes require explicit review
 .github/workflows/ @EForce11
