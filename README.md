@@ -39,26 +39,26 @@ What sets it apart from per-host tools like Fail2Ban:
 ## Architecture
 
 ```
-┌──────────────────────── Protected host ─────────────────────────┐
+┌──────────────────────── Protected host ──────────────────────────┐
 │  wt-sentry  (unprivileged)          wt-turret  (root, no network)│
 │  - log watcher → normalized events  - self-preservation rules    │
 │  - read-only FIM + package verify   - signature & replay checks  │
 │  - process / network telemetry      - nftables table + rollback  │
 │  - local Sigma rules  ── reflex ──► - verified process kill      │
-└──────────────┬──────────────────────────────────────────────────┘
+└──────────────┬───────────────────────────────────────────────────┘
                │ gRPC / mTLS (agent-initiated)
-┌──────────────▼──────────────── Core host ───────────────────────┐
+┌──────────────▼──────────────── Core host ────────────────────────┐
 │  wt-core                                                         │
 │  - CSR enrollment CA, ingest, heartbeat, command stream          │
 │  - entity correlator + deterministic scoring (tiers T0–T3)       │
 │  - fleet immunity, baselines, CTI feeds                          │
 │  - signs reversible network actions only                         │
-│  PostgreSQL + TimescaleDB · Grafana · wt-frontal (optional AI)   │
-└──────────────┬──────────────────────────────────────────────────┘
+│  Web Console · PostgreSQL + TimescaleDB · wt-frontal (opt. AI)   │
+└──────────────┬───────────────────────────────────────────────────┘
                │ WireGuard
-┌──────────────▼──────────── Administrator ───────────────────────┐
-│  wt-cli (signs destructive actions with the admin key) · ntfy    │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────▼──────────── Administrator ────────────────────────┐
+│  browser console (passkeys) · wt-cli (admin key) · ntfy          │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 For full architecture details, see [docs/architecture.md](docs/architecture.md). Earlier revisions are in [docs/archive/](docs/archive/).
@@ -81,12 +81,13 @@ These pieces are being migrated to the v3.2 design. The regex patterns become Si
 | 0 | Contracts: protobuf schemas, SQL migrations, rule layout | v0.3.0 |
 | 1 | `wt-turret`: safety layer, signed commands, nftables | v0.4.0 |
 | 2 | `wt-sentry`: normalized events, Sigma engine, FIM, reflex arc | v0.5.0 |
-| 3 | `wt-core`: enrollment, correlation, scoring, **fleet immunity** | v0.6.0 |
-| 4 | `wt-cli` + human-in-the-loop approvals, Grafana | v0.7.0 |
-| 5 | Process telemetry: auditd and eBPF collectors | v0.8.0 |
-| 6 | Baselines and anomaly signals | v0.9.0 |
-| 7 | Installer, hardening, production release | v1.0.0 |
-| 8 | Optional AI analyst, CTI feeds, decoys, passkey approvals | v1.1+ |
+| 3 | `wt-core`: enrollment, correlation, scoring, **fleet immunity**, demo stack | v0.6.0 |
+| 4 | `wt-cli` + human-in-the-loop approvals | v0.7.0 |
+| 5 | **Web Console**: incidents, fleet, bans, approvals, live attack map | v0.8.0 |
+| 6 | Process telemetry: auditd and eBPF collectors | v0.9.0 |
+| 7 | Baselines and anomaly signals | v0.10.0 |
+| 8 | Installer, hardening, production release | v1.0.0 |
+| 9 | Optional AI analyst, CTI feeds, decoys | v1.1+ |
 
 ---
 
@@ -185,8 +186,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, branch namin
 - [ ] Phase 2: `wt-sentry` normalized telemetry and local detection
 - [ ] Phase 3: `wt-core` correlation and fleet immunity
 - [ ] Phase 4: `wt-cli` and human-in-the-loop approvals
-- [ ] Phase 5: Process telemetry (auditd, eBPF)
-- [ ] Phase 6: Baselines and anomaly signals
+- [ ] Phase 5: Web Console (embedded in `wt-core`, passkey login and approvals)
+- [ ] Phase 6: Process telemetry (auditd, eBPF)
+- [ ] Phase 7: Baselines and anomaly signals
 - [ ] v1.0.0: Production release
 - [ ] v1.1+: Optional AI analyst, CTI feeds, decoys
 
