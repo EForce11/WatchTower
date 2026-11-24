@@ -9,6 +9,7 @@ import (
 // All lengths are in bytes, not runes.
 const (
 	MaxAttrs           = 16
+	MaxAttrKeyBytes    = 64
 	MaxAttrValueBytes  = 256
 	MaxRawExcerptBytes = 512
 )
@@ -16,6 +17,7 @@ const (
 var (
 	ErrMissingField      = errors.New("missing required field")
 	ErrAttrsTooMany      = errors.New("too many attrs")
+	ErrAttrKeyTooLong    = errors.New("attr key too long")
 	ErrAttrValueTooLong  = errors.New("attr value too long")
 	ErrRawExcerptTooLong = errors.New("raw_excerpt too long")
 )
@@ -42,6 +44,9 @@ func ValidateEvent(e *Event) error {
 		return fmt.Errorf("%w: %d > %d", ErrAttrsTooMany, n, MaxAttrs)
 	}
 	for k, v := range e.GetAttrs() {
+		if len(k) > MaxAttrKeyBytes {
+			return fmt.Errorf("%w: key is %d bytes > %d", ErrAttrKeyTooLong, len(k), MaxAttrKeyBytes)
+		}
 		if len(v) > MaxAttrValueBytes {
 			return fmt.Errorf("%w: attrs[%q] is %d bytes > %d", ErrAttrValueTooLong, k, len(v), MaxAttrValueBytes)
 		}
