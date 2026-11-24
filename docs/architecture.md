@@ -41,7 +41,7 @@ v3.1 got the direction right (scope cut, privilege split, CSR PKI, read-only FIM
 **Simplification:**
 16. **Fewer binaries**: `wt-midbrain` becomes a package inside `wt-core` (it is a feed poller). Shipped binaries: `wt-core`, `wt-sentry`, `wt-turret`, `wt-cli`, plus optional `wt-frontal`. `wt-interceptor` (WAF) is dropped.
 17. **Naming**: biological names are kept as module codenames for documentation and package names; binaries keep functional names (§2.3). Mixed metaphors are no longer a headline item.
-18. **Toolchain**: Go version tracks `go.mod` (currently 1.24), not a hardcoded 1.21.
+18. **Toolchain**: Go version tracks `go.mod` (currently 1.25), not a hardcoded 1.21.
 
 **Operator experience:**
 19. **Web Console (Visual Cortex)** (§3.6): an embedded Svelte SPA served by `wt-core` over WireGuard replaces "Grafana as the dashboard". It covers incidents, fleet, response, approvals and audit, with passkey login and passkey approvals. Grafana becomes optional. A demo stack with an attack simulator (§3.6.4) provides data for development, E2E tests and screenshots.
@@ -96,7 +96,7 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 
 | Layer | Technology | Justification |
 |---|---|---|
-| Language | Go (version per `go.mod`, currently 1.24), `CGO_ENABLED=0` | Single static binary, low memory, native concurrency |
+| Language | Go (version per `go.mod`, currently 1.25), `CGO_ENABLED=0` | Single static binary, low memory, native concurrency |
 | Remote IPC | gRPC + Protobuf (`pkg/synapse`), mTLS | Typed bi-directional streams |
 | Local IPC | Unix domain socket `/run/watchtower/turret.sock` (`0660 root:watchtower`) + `SO_PEERCRED` | Zero network surface for the privileged daemon |
 | Storage | PostgreSQL 14+ / TimescaleDB | Hypertables, compression, retention, ACID |
@@ -202,6 +202,8 @@ Biological names are documentation and package codenames. Binaries keep function
 | Reflex Arc | Sentry → Turret local path | Fast, bounded, local responses |
 | Synapse | `pkg/synapse` | Protobuf contracts (remote + local IPC) |
 | Amygdala | `internal/sentry/decoy` (v1.x) | Canary files / decoy credentials |
+
+> **Note:** Synapse `.proto` sources live in `proto/watchtower/synapse/v1/`; the generated Go code is committed in `pkg/synapse/v1/` and kept current by `make proto-check`.
 
 ---
 
@@ -553,9 +555,16 @@ Migrations are applied by role `wt_owner` (owns all objects). The runtime role `
 CREATE EXTENSION IF NOT EXISTS timescaledb;
 
 -- Roles (created by the installer; passwords set out of band)
--- CREATE ROLE wt_owner  NOLOGIN;
+-- CREATE ROLE wt_owner  LOGIN;      -- no password; see note below
 -- CREATE ROLE wt_core   LOGIN;
 -- CREATE ROLE wt_grafana LOGIN;
+--
+-- wt_owner needs LOGIN because TimescaleDB policy jobs (compression, retention)
+-- run as the table owner. It has no password, so pg_hba.conf must not allow any
+-- passwordless method (trust, peer, ident, cert) for it. Add an explicit
+-- first-match line:  host  all  wt_owner  all  reject
+-- (and the equivalent `local` line). Migrations reach it via SET ROLE from an
+-- administrative connection, never by logging in as wt_owner.
 
 -- 1. AGENTS
 CREATE TYPE agent_status AS ENUM ('PENDING', 'ALIVE', 'STALE', 'DEAD', 'ISOLATED', 'REVOKED');
@@ -778,7 +787,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO wt_grafana;
 
 Turret holds only public keys: `/etc/watchtower/automation.pub` and `/etc/watchtower/admin_keys.d/*.pub`, written by the installer (root-owned, `0644`). Adding an admin key to a host is a root operation on that host, not something Core can push.
 
-### 5.2 Signed Commands (`pkg/synapse/command.proto`)
+### 5.2 Signed Commands (`proto/watchtower/synapse/v1/command.proto`)
 
 ```protobuf
 message CommandPayload {
@@ -797,7 +806,13 @@ message SignedCommand {
   bytes  payload   = 1;  // serialized CommandPayload — the signature covers these exact bytes
   bytes  signature = 2;
   string key_id    = 3;
-  string scheme    = 4;  // "ed25519" | "webauthn-es256"
+  SignatureScheme scheme = 4;  // SIGNATURE_SCHEME_ED25519 | SIGNATURE_SCHEME_WEBAUTHN_ES256
+  WebAuthnAssertion webauthn = 5;  // set only for SIGNATURE_SCHEME_WEBAUTHN_ES256
+}
+
+message WebAuthnAssertion {
+  bytes authenticator_data = 1;
+  bytes client_data_json   = 2;
 }
 ```
 

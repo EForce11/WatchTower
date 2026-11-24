@@ -1,4 +1,4 @@
-.PHONY: proto proto-lint proto-check build test integration-test integration-test-race clean run-core run-sentry dev-deps fmt lint cover cover-html check-coverage help all
+.PHONY: verify proto proto-lint proto-check build test integration-test integration-test-race clean run-core run-sentry dev-deps fmt lint cover cover-html check-coverage help all
 
 # Make `go install`ed tools (protoc-gen-go, protoc-gen-go-grpc) visible
 # even when $(go env GOPATH)/bin is not on the user's shell PATH.
@@ -19,7 +19,15 @@ proto-lint:
 
 # Lint, regenerate, and fail if committed generated code is stale
 proto-check:
-	buf lint && buf generate && git diff --exit-code -- pkg/synapse
+	buf lint && buf generate && git diff --exit-code -- pkg/synapse && test -z "$$(git status --porcelain -- pkg/synapse)"
+
+# Run the full CI gate locally: proto-check, static build, lint, tests
+verify: proto-check
+	@echo "Verifying (CGO_ENABLED=0 build, lint, test)..."
+	CGO_ENABLED=0 go build ./...
+	$(MAKE) lint
+	$(MAKE) test
+	@echo "Verify complete"
 
 # Build all binaries
 build: proto
@@ -115,6 +123,7 @@ help:
 	@echo "Build:"
 	@echo "  make build              - Build all binaries"
 	@echo "  make proto              - Generate protobuf (buf)"
+	@echo "  make verify             - Run the CI gate locally (proto-check, build, lint, test)"
 	@echo "  make clean              - Remove build artifacts"
 	@echo ""
 	@echo "Run:"

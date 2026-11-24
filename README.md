@@ -11,7 +11,7 @@
   <p align="center">
     <a href="https://github.com/EForce11/WatchTower/actions/workflows/ci.yml"><img src="https://github.com/EForce11/WatchTower/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
     <a href="https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml"><img src="https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
-    <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-1.24-00ADD8?logo=go" alt="Go Version"></a>
+    <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-1.25-00ADD8?logo=go" alt="Go Version"></a>
     <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
     <a href="https://github.com/EForce11/WatchTower/releases"><img src="https://img.shields.io/github/v/release/EForce11/WatchTower?include_prereleases" alt="Release"></a>
   </p>
@@ -97,8 +97,8 @@ These pieces are being migrated to the v3.2 design. The regex patterns become Si
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Go | 1.24+ | Build toolchain |
-| protoc | Any | Compile .proto files |
+| Go | 1.25+ | Build toolchain |
+| buf | v1.50.0 | Lint and generate protobuf (`make dev-deps`) |
 | make | Any | Build automation |
 
 ### Install
@@ -139,8 +139,8 @@ make integration-test
 # Run integration test with race detector
 make integration-test-race
 
-# Verify Phase 0 completion
-./scripts/verify-phase0.sh
+# Run the full CI gate locally (proto-check, build, lint, test)
+make verify
 ```
 
 ---
@@ -152,13 +152,18 @@ WatchTower/
 ├── cmd/
 │   ├── wt-core/         # Central server
 │   ├── wt-sentry/       # Monitoring agent
-│   ├── wt-cli/          # Management CLI (stub)
-│   └── wt-interceptor/  # Stub; removed in v3.2 (WAF dropped from scope)
+│   └── wt-cli/          # Management CLI (stub)
+├── proto/               # Protobuf sources (watchtower/synapse/v1)
 ├── internal/
 │   ├── config/          # Configuration loading
+│   ├── core/store/      # SQL migrator and database bootstrap
+│   ├── rules/           # Rule layout and WES mapping validation
 │   └── sentry/          # Log watcher, pattern matcher, metrics
 ├── pkg/
-│   └── protocol/        # Protobuf + generated gRPC code (becomes pkg/synapse)
+│   └── synapse/v1/      # Generated protobuf/gRPC code and IPC framing
+├── deployments/
+│   └── sql/             # Embedded SQL bootstrap and migrations
+├── rules/               # Detection rules and WES field mapping
 ├── configs/             # Example configuration files
 ├── test/
 │   └── integration/     # End-to-end integration tests
@@ -166,7 +171,7 @@ WatchTower/
 └── scripts/             # Developer helper scripts
 ```
 
-The target layout (`cmd/wt-turret`, `pkg/synapse`, `rules/`, `deployments/sql/`) and the plan for each existing package are in [§8 of the architecture document](docs/architecture.md#8-migration-from-the-current-codebase).
+The target layout (`cmd/wt-turret` and the remaining packages) and the plan for each existing package are in [§8 of the architecture document](docs/architecture.md#8-migration-from-the-current-codebase).
 
 ---
 
