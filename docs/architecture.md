@@ -43,6 +43,9 @@ v3.1 got the direction right (scope cut, privilege split, CSR PKI, read-only FIM
 17. **Naming**: biological names are kept as module codenames for documentation and package names; binaries keep functional names (§2.3). Mixed metaphors are no longer a headline item.
 18. **Toolchain**: Go version tracks `go.mod` (currently 1.24), not a hardcoded 1.21.
 
+**Operator experience:**
+19. **Web Console (Visual Cortex)** (§3.6): an embedded Svelte SPA served by `wt-core` over WireGuard replaces "Grafana as the dashboard". It covers incidents, fleet, response, approvals and audit, with passkey login and passkey approvals. Grafana becomes optional. A demo stack with an attack simulator (§3.6.4) provides data for development, E2E tests and screenshots.
+
 ### Earlier revisions
 - **v3.1 (draft, 2026-11-06):** Neuro-architecture naming, REFLEX/CORTEX_SIGNED split, CSR PKI, read-only FIM, Redis/CGo removal, adaptive subnet limiter. → [`archive/architecture-v3.1-draft.md`](archive/architecture-v3.1-draft.md)
 - **v2.2 (2026-09-28):** Operational hardening, detection false-positive fixes, CI gates. → [`archive/architecture-v2.2-hardening.md`](archive/architecture-v2.2-hardening.md)
@@ -82,7 +85,7 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 
 ### 1.2 Non-Negotiable Architectural Invariants
 
-1. **Pure Go, static binaries.** `CGO_ENABLED=0` for every shipped binary. (eBPF programs are compiled to BPF bytecode at build time with `bpf2go` and embedded; the loader is pure Go `cilium/ebpf`. This needs `clang` on the build machine only.)
+1. **Pure Go, static binaries.** `CGO_ENABLED=0` for every shipped binary. (eBPF programs are compiled to BPF bytecode at build time with `bpf2go` and embedded; the loader is pure Go `cilium/ebpf`. This needs `clang` on the build machine only. Likewise, the Web Console is built with Node.js in CI/release and embedded as static files; no Node.js runs in production.)
 2. **Single data store.** PostgreSQL 14+ with TimescaleDB on Core. No Redis, no message brokers.
 3. **Bounded self-inflicted risk.** Every automated action is reversible and has a TTL. Self-preservation rules (§3.4.1) cannot be overridden by any command, signed or not. A single command removes every WatchTower firewall rule (`wt-turret panic-flush`).
 4. **No agent modifies system files.** Sentry is read-only. Turret's only filesystem write outside its own state directory is `chmod 0600` on a verified malware binary inside a temp directory.
@@ -102,7 +105,8 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 | Detection rules | Sigma-compatible YAML (subset) | Community format, reviewable, testable |
 | AI (optional) | Any OpenAI-compatible HTTP API (OpenRouter, Bedrock gateway, Ollama, vLLM, llama-server) | Provider-agnostic, local-model friendly |
 | Notifications | ntfy (self-hostable) | Push notifications with action buttons |
-| Dashboard | Grafana 10+ | Native PostgreSQL data source, no custom UI to maintain |
+| Web Console | Svelte 5 + TypeScript SPA, embedded in `wt-core` via `go:embed`; Connect RPC API | One binary to deploy; same API as `wt-cli`; Node.js only at build time |
+| Metrics exploration (optional) | Grafana 10+ | Read-only PostgreSQL role, no hard dependency |
 | Management plane | WireGuard | Kernel-native, simple, encrypted admin network |
 
 ---
@@ -147,13 +151,14 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 │  │  • Midbrain: CTI feed poller → signed IOC bundles                   │  │
 │  │  • Policy Engine + Core Automation Key (network actions only)       │  │
 │  │  • Approval queue (destructive actions need admin signature)        │  │
+│  │  • Visual Cortex: embedded Web Console (WireGuard only)             │  │
 │  └──────┬──────────────────────────┬───────────────────────────────────┘  │
 │         │ pgx                      │ gRPC, loopback, optional             │
 │         ▼                          ▼                                      │
-│  ┌──────────────────────┐   ┌───────────────────────────┐                 │
-│  │ PostgreSQL+Timescale │   │ wt-frontal (Frontal Cortex)│ ──HTTPS──► LLM  │
-│  │ events, detections,  │   │  advisory only, stateless  │                 │
-│  │ incidents, actions,  │   └───────────────────────────┘                 │
+│  ┌──────────────────────┐   ┌────────────────────────────┐                │
+│  │ PostgreSQL+Timescale │   │ wt-frontal (Frontal Cortex)│ ──HTTPS──► LLM │
+│  │ events, detections,  │   │  advisory only, stateless  │                │
+│  │ incidents, actions,  │   └────────────────────────────┘                │
 │  │ approvals, audit     │                                                 │
 │  └──────────────────────┘                                                 │
 └───────────┬───────────────────────────────────────────────────────────────┘
@@ -161,8 +166,9 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 ┌───────────▼───────────────────────────────────────────────────────────────┐
 │ ADMINISTRATOR PLANE  (conscious override)                                 │
 │  • wt-cli with Administrator Approval Key (signs destructive actions)     │
-│  • ntfy on mobile (notification + deep link; approval via passkey, v1.x)  │
-│  • Grafana dashboards                                                     │
+│  • Web Console in browser (passkey login + passkey approvals)             │
+│  • ntfy on mobile (notification + deep link to the console)               │
+│  • Grafana (optional, ad-hoc metrics)                                     │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -175,7 +181,8 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 | `wt-core` → `wt-frontal` | gRPC 127.0.0.1:50052 | Loopback + shared secret (mTLS optional) | `IncidentContext` → `Assessment` |
 | `wt-frontal` → LLM | HTTPS | API key | Schema-constrained inference |
 | `wt-core` → ntfy | HTTPS | ntfy access token | Notifications with deep links |
-| `wt-cli` → `wt-core` | gRPC over WireGuard | mTLS (admin cert) | Queries, approvals (carrying admin signatures) |
+| `wt-cli` → `wt-core` | Connect/gRPC over WireGuard | mTLS (admin cert) | Queries, approvals (carrying admin signatures) |
+| Browser → `wt-core` console | Connect (HTTP/JSON) over HTTPS, WireGuard only | Passkey session cookie + CSRF header; per-approval passkey signature | Web Console (§3.6) |
 
 The agent always initiates the connection to Core. Agents need no inbound ports.
 
@@ -189,6 +196,7 @@ Biological names are documentation and package codenames. Binaries keep function
 | Hippocampus | `internal/core/hippocampus` | Baselines and anomaly scores |
 | Midbrain | `internal/core/midbrain` | CTI feed ingestion, IOC bundles |
 | Frontal Cortex | `wt-frontal` (optional) | AI triage and narrative |
+| Visual Cortex | `internal/core/console` + `web/` | Web Console |
 | Sensory Nerves | `wt-sentry` | Telemetry collection, local detection |
 | Motor Nerves | `wt-turret` | Privileged enforcement |
 | Reflex Arc | Sentry → Turret local path | Fast, bounded, local responses |
@@ -326,7 +334,7 @@ Heartbeat every 30 s with agent version, rule/IOC bundle versions, collector tie
 | **B** | Tail `/var/log/audit/audit.log` (auditd with `log_group = watchtower` and WatchTower's `execve`/`connect` rule set) | auditd installed, config change | Every exec, connect syscalls | Depends on auditd rules being present; noisier |
 | **C** | Poll `/proc` every 2 s | Nothing | Long-running processes, own-UID fd mapping | Misses short-lived processes; **no connection→process attribution for other users** |
 
-The active tier is reported in every heartbeat and shown in Grafana, so operators know their real visibility. Rules that need Tier A/B data declare it (`requires: process_exec`) and are reported as inactive on Tier C agents rather than silently never firing.
+The active tier is reported in every heartbeat and shown in the Web Console, so operators know their real visibility. Rules that need Tier A/B data declare it (`requires: process_exec`) and are reported as inactive on Tier C agents rather than silently never firing.
 
 #### 3.3.4 Metrics & IOC Matching (`internal/sentry/metrics`, `internal/sentry/ioc`)
 
@@ -419,6 +427,53 @@ Single binary for operators: PKI initialization, setup wizard, enrollment tokens
 
 ---
 
+### 3.6 Web Console (Visual Cortex)
+
+**Package:** `internal/core/console` (Go API + static asset server), frontend source in `web/`. It is served by `wt-core`; there is no separate binary.
+**Purpose:** the day-to-day operator interface, and the face of the project. Screenshots and the demo GIF in the README come from it. It sits on the same API as `wt-cli`, so anything the console does can also be done from the CLI.
+
+#### 3.6.1 Screens
+
+| Screen | Content |
+|---|---|
+| **Overview** | Fleet health (alive/stale/dead), open incidents by tier, bans in the last 24 h (local vs fleet-wide), live attack feed, world map of attack sources, top attacked services |
+| **Incidents** | Filterable list; detail view with event timeline, entity graph (IP → host → user → process → file), score breakdown, matched rules with ATT&CK tags, AI narrative (if enabled), response actions taken |
+| **Fleet** | Agents with status, version, collector tier (A/B/C), rule and IOC bundle versions, last heartbeat; per-agent event volume sparkline |
+| **Response** | Active bans fleet-wide with TTL countdown and offense ladder, isolated hosts, unban/release (release needs approval) |
+| **Approvals** | Pending T3 actions showing the **decoded command payload** next to the narrative; approve/reject with a passkey |
+| **Detections** | Loaded rules, hit counts, false-positive markings, rules inactive because of collector tier |
+| **Audit** | Audit log with chain-verification status and the latest anchored head hash |
+
+#### 3.6.2 Technology
+
+- **Frontend:** Svelte 5 + TypeScript + Vite, built as a static SPA. Charts use uPlot (small, fast time series). The world map is a bundled SVG/TopoJSON, with no tile servers and no external requests.
+- **Embedding:** the built assets are embedded into `wt-core` with `go:embed`. Node.js is needed **only to build the UI** (in CI and release), like `clang` for eBPF. A `go build` without built assets embeds a placeholder page saying "console not built, run `make ui`", so the pure-Go build keeps working.
+- **API:** Connect RPC (`connectrpc.com/connect`, pure Go). The same `.proto` service definitions serve gRPC to `wt-cli` and HTTP/JSON to the browser, so there is one API surface, not two. The live feed uses Connect server streaming.
+- **GeoIP (optional):** DB-IP Lite country database (CC BY 4.0), downloaded by the installer. Without it the map is hidden; nothing breaks.
+
+#### 3.6.3 Security
+
+The console renders attacker-controlled strings (log excerpts, user agents, URLs, command lines), so it is an XSS target by design.
+
+- **Exposure:** listens only on the WireGuard interface (default `10.8.0.1:8443`), TLS with a certificate from the Core CA.
+- **Authentication:** passkey (WebAuthn) login for registered admins. Sessions are 8 h, `HttpOnly; Secure; SameSite=Strict` cookies. State-changing requests also require a custom header (CSRF).
+- **Roles:** `viewer` (read-only) and `approver`. Approving a T3 action needs a **fresh passkey signature over that action's payload** (§5.3); a logged-in session alone can never approve.
+- **Output encoding:** all telemetry is rendered as text. Svelte's `{@html}` is banned by a lint rule in CI. URLs from telemetry are never rendered as clickable links.
+- **CSP:** `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'`. No inline scripts, no third-party origins.
+
+#### 3.6.4 Demo Stack
+
+`deployments/demo/` is a docker-compose stack: Core, PostgreSQL, three Sentry+Turret agents and an **attack simulator** container. The simulator replays SSH brute force, web scanning, an exploit followed by a payload download into `/tmp`, and a C2 beacon to a test IOC. It serves three purposes:
+1. the Phase 3 end-to-end test environment,
+2. realistic data for UI development and the Phase 5 UI tests,
+3. README screenshots and the demo GIF (`make demo`).
+
+#### 3.6.5 Grafana
+
+Grafana is **optional**. It is for ad-hoc metric exploration through the read-only `wt_grafana` role. Provisioned dashboards may be shipped later, but nothing in WatchTower depends on Grafana.
+
+---
+
 ## 4. Data Model, Detection & Storage
 
 ### 4.1 WatchTower Event Schema (WES)
@@ -492,7 +547,7 @@ custom:
 
 ### 4.3 PostgreSQL / TimescaleDB Schema (`deployments/sql/`)
 
-Migrations are applied by role `wt_owner` (owns all objects). The runtime role `wt_core` gets only the privileges listed. Grafana uses read-only `wt_grafana`.
+Migrations are applied by role `wt_owner` (owns all objects). The runtime role `wt_core` gets only the privileges listed. Optional Grafana uses read-only `wt_grafana`.
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS timescaledb;
@@ -718,7 +773,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO wt_grafana;
 |---|---|---|---|
 | Enrollment CA | Core, `/etc/watchtower/pki/ca.key` (`0600 wt-core`) | Agent and admin client certificates | Attacker can enroll rogue agents (inject fake telemetry) |
 | Core Automation Key (Ed25519) | Core, `/etc/watchtower/pki/automation.key` | T1/T2 commands, IOC bundles, rule bundles | Attacker can issue bans (≤ 7 d) on any agent; **cannot** kill processes, isolate hosts or ban permanently; self-preservation still applies |
-| Administrator Approval Key(s) | Admin workstation (`~/.config/watchtower/admin.key`, passphrase-encrypted) or a passkey (v1.x) | T3 commands, `RELEASE_HOST`, `UNBAN` of permanent bans | Full response authority — protect accordingly |
+| Administrator Approval Key(s) | Admin workstation (`~/.config/watchtower/admin.key`, passphrase-encrypted) or a passkey (Web Console, Phase 5) | T3 commands, `RELEASE_HOST`, `UNBAN` of permanent bans | Full response authority — protect accordingly |
 | Agent key | Agent, `/etc/watchtower/agent.key` (`0600 watchtower`) | mTLS client auth | Impersonate that one agent |
 
 Turret holds only public keys: `/etc/watchtower/automation.pub` and `/etc/watchtower/admin_keys.d/*.pub`, written by the installer (root-owned, `0644`). Adding an admin key to a host is a root operation on that host, not something Core can push.
@@ -754,10 +809,10 @@ Because Sentry only forwards `SignedCommand` bytes, a compromised Sentry can dro
 
 1. Policy Engine creates a `pending_approvals` row containing the exact `CommandPayload` bytes, and sends an ntfy notification: summary, score breakdown, AI narrative (if any), and a deep link.
 2. **v1 (wt-cli):** `wt-cli approvals show <id>` displays the decoded payload; `wt-cli approvals approve <id>` signs the bytes locally with the admin key and uploads the signature. Core cannot produce this signature.
-3. **v1.x (passkey):** the deep link opens a minimal approval page served by Core over WireGuard. The admin's phone signs the payload hash as a WebAuthn challenge (ES256). Turret verifies the WebAuthn assertion (`authenticatorData`, `clientDataJSON`, challenge = SHA-256(payload)) against the registered public key. Pure Go (`crypto/ecdsa`, `encoding/json`).
+3. **Web Console (passkey, Phase 5):** the deep link opens the console's Approvals screen (§3.6) over WireGuard. The admin's phone signs the payload hash as a WebAuthn challenge (ES256). Turret verifies the WebAuthn assertion (`authenticatorData`, `clientDataJSON`, challenge = SHA-256(payload)) against the registered public key. Pure Go (`crypto/ecdsa`, `encoding/json`).
 4. Rejection or expiry is audited; nothing is sent to the agent.
 
-A compromised Core can show the admin a misleading summary, but the admin signs the actual payload bytes — the CLI and approval page always render the decoded payload (action, agent, target, exec) next to the narrative.
+A compromised Core can show the admin a misleading summary, but the admin signs the actual payload bytes — the CLI and the console always render the decoded payload (action, agent, target, exec) next to the narrative.
 
 ### 5.4 CSR-Based Enrollment
 
@@ -768,7 +823,7 @@ A compromised Core can show the admin a misleading summary, but the admin signs 
 
 ### 5.5 Network Exposure
 
-- Core: gRPC `:50051` reachable from agents (public or VPN); Grafana, wt-cli API, approval page and PostgreSQL only on the WireGuard interface.
+- Core: gRPC `:50051` reachable from agents (public or VPN); Web Console, wt-cli API, PostgreSQL and (optional) Grafana only on the WireGuard interface.
 - Agents: no inbound ports for WatchTower.
 - Frontal: loopback only; outbound HTTPS to the configured LLM endpoint (or none, with a local model).
 
@@ -784,6 +839,7 @@ wt-cli setup-wizard                                    # DB roles/migrations, nt
 # Administrator workstation
 wt-cli admin keygen                                    # Admin Approval Key (passphrase-protected)
 wt-cli admin register --pub ~/.config/watchtower/admin.pub   # records public key; prints install line for agents
+wt-cli admin passkey-invite --role approver           # one-time link to register a passkey in the Web Console
 
 # New agent
 wt-cli agent token-create --name web-1 --ttl 15m       # prints token + CA fingerprint + install command
@@ -802,6 +858,10 @@ wt-cli unban 203.0.113.7 --fleet
 wt-cli rules test rules/                               # runs positive/negative samples
 wt-cli rules lint rules/
 
+# Web Console & demo
+make ui                                               # build the console and embed it into wt-core
+make demo                                             # docker-compose demo stack with attack simulator
+
 # Integrity & emergencies
 wt-cli audit verify --anchor <hash>
 wt-turret panic-flush                                  # on an agent: remove every WatchTower firewall rule
@@ -811,19 +871,20 @@ wt-turret panic-flush                                  # on an agent: remove eve
 
 ## 7. Development Roadmap
 
-Ordering principle: **ship the smallest thing that is already better than Fail2Ban** (fleet immunity with safe enforcement), then add depth. Anomaly detection comes late because it needs weeks of collected data anyway.
+Ordering principle: **ship the smallest thing that is already better than Fail2Ban** (fleet immunity with safe enforcement), make it **visible** (the Web Console comes before process-telemetry depth, because it is how people evaluate the project), then add depth. Anomaly detection comes late because it needs weeks of collected data anyway.
 
 | Phase | Version | Focus | Deliverables | Verification gate |
 |---|---|---|---|---|
 | **0** | v0.3.0 | Contracts | `pkg/synapse` (`event.proto`, `command.proto`, `agent.proto`, `ipc.proto`), `deployments/sql/` migrations with roles, `rules/` layout + `wes-mapping.yaml`, Makefile targets | `buf lint`/`protoc` generate cleanly; `CGO_ENABLED=0 go build ./...`; migrations apply on a fresh TimescaleDB in CI |
 | **1** | v0.4.0 | `wt-turret` safety first | Safety layer, origin table, reflex budget, signature + replay verification, nftables table, `panic-flush`, verified kill | `go test -race ./internal/turret/...` 100% pass, including netns tests: self-ban refusal, path traversal refusal, forged/replayed/expired command refusal, `panic-flush` restores connectivity |
 | **2** | v0.5.0 | `wt-sentry` | LogWatcher → WES, Sigma subset engine + correlation, FIM + package verification, `/proc` metrics, Tier C process collector, Reflex Arc, enrollment client | Rule regression corpus (WordPress `.php`, `;` query strings, single SSH typo) passes; FIM ignores package-consistent upgrades in a Debian container test |
-| **3** | v0.6.0 | `wt-core` | CSR enrollment, ingest, core rules, entity correlator, scoring/tiers, **Fleet Immunity**, Policy Engine, Automation Key signing, audit chain | E2E (docker-compose, 3 agents): brute force on agent 1 → fleet ban on agents 2–3 within 10 s; whitelisted IP never banned; Core cannot produce a valid T3 command |
-| **4** | v0.7.0 | `wt-cli` + HITL | CLI, admin keys, approvals, ntfy notifications, audit anchoring, Grafana dashboards | Approval E2E: `KILL_PROCESS` executes only with admin signature; tampered payload refused |
-| **5** | v0.8.0 | Process telemetry depth | Tier B (auditd), Tier A (eBPF exec/connect) | Short-lived process (`sh -c 'curl …'`) detected on Tier A/B; tier reported in heartbeat |
-| **6** | v0.9.0 | Hippocampus | Continuous aggregates, median/MAD baselines, cold-start logic | Synthetic 6-week dataset: no anomaly signals before thresholds, injected spikes detected, `MAD = 0` handled |
-| **7** | v1.0.0 | Hardening & release | Installer, systemd units (with sandboxing), upgrade path, docs, threat model review | Fresh-install-to-first-detection < 15 min on Debian 12 and Rocky 9 |
-| **8** | v1.1+ | Frontal, Midbrain, Amygdala, passkey approvals | Optional AI analyst, CTI feeds + signed IOC bundles, decoys, WebAuthn approvals | Prompt-injection corpus → never an action outside the allow-list; 100k-IOC lookup benchmark < 1 µs |
+| **3** | v0.6.0 | `wt-core` + demo stack | CSR enrollment, ingest, core rules, entity correlator, scoring/tiers, **Fleet Immunity**, Policy Engine, Automation Key signing, audit chain, `deployments/demo/` with attack simulator (§3.6.4) | E2E on the demo stack (3 agents): brute force on agent 1 → fleet ban on agents 2–3 within 10 s; whitelisted IP never banned; Core cannot produce a valid T3 command |
+| **4** | v0.7.0 | `wt-cli` + HITL | Connect API, CLI, admin keys, approvals, ntfy notifications, audit anchoring | Approval E2E: `KILL_PROCESS` executes only with admin signature; tampered payload refused |
+| **5** | v0.8.0 | **Web Console** (Visual Cortex) | Svelte SPA embedded in `wt-core`: Overview, Incidents, Fleet, Response, Approvals, Detections, Audit; passkey login and passkey approvals; live feed; `make ui`, `make demo` | Playwright E2E on the demo stack with a virtual authenticator: login, approve a `KILL_PROCESS`, reject a tampered payload; XSS corpus (`<script>`, `javascript:` URLs, ANSI codes in log lines) renders as inert text; zero CSP violations; README screenshots and demo GIF regenerated from the demo stack |
+| **6** | v0.9.0 | Process telemetry depth | Tier B (auditd), Tier A (eBPF exec/connect) | Short-lived process (`sh -c 'curl …'`) detected on Tier A/B; tier reported in heartbeat |
+| **7** | v0.10.0 | Hippocampus | Continuous aggregates, median/MAD baselines, cold-start logic | Synthetic 6-week dataset: no anomaly signals before thresholds, injected spikes detected, `MAD = 0` handled |
+| **8** | v1.0.0 | Hardening & release | Installer, systemd units (with sandboxing), upgrade path, docs, threat model review | Fresh-install-to-first-detection < 15 min on Debian 12 and Rocky 9 |
+| **9** | v1.1+ | Frontal, Midbrain, Amygdala | Optional AI analyst (narratives shown in the console), CTI feeds + signed IOC bundles, decoys, optional Grafana dashboards | Prompt-injection corpus → never an action outside the allow-list; 100k-IOC lookup benchmark < 1 µs |
 
 ---
 
@@ -840,7 +901,8 @@ The current repository (`v0.2.0`, ~2.3k lines of Go) is small enough to restruct
 | `internal/sentry/metrics.go` (+ tests) | Keep | `internal/sentry/metrics` |
 | `cmd/wt-interceptor` | Delete | — (WAF dropped from scope) |
 | `cmd/wt-core`, `cmd/wt-sentry`, `cmd/wt-cli` | Keep | same |
-| — | Add | `cmd/wt-turret`, `cmd/wt-frontal` (Phase 8) |
+| — | Add | `cmd/wt-turret`, `cmd/wt-frontal` (Phase 9) |
+| — | Add | `web/` (console frontend), `internal/core/console`, `deployments/demo/` |
 | `test/integration/phase0_test.go`, `scripts/verify-phase0.sh` | Replace | New Phase 0 gate per §7 |
 | `.github/workflows`, `.golangci.yml`, `.goreleaser.yml`, `Makefile` | Keep, update | Add `test-rules`, netns tests (privileged runner), migration test |
 | `WatchTower-XDR-Architecture-v2_2.md`, old `docs/architecture.md` | Archived | `docs/archive/` |
