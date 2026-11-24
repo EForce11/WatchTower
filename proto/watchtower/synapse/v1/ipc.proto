@@ -1,0 +1,47 @@
+// Local IPC between Sentry and Turret.
+syntax = "proto3";
+
+package watchtower.synapse.v1;
+
+import "watchtower/synapse/v1/command.proto";
+
+option go_package = "github.com/EForce11/WatchTower/pkg/synapse/v1;synapsev1";
+
+// TurretResult is the outcome of a request handled by Turret.
+enum TurretResult {
+  TURRET_RESULT_UNSPECIFIED = 0;
+  TURRET_RESULT_APPLIED = 1;
+  TURRET_RESULT_REFUSED_SAFETY = 2;
+  TURRET_RESULT_REFUSED_SIGNATURE = 3;
+  TURRET_RESULT_REFUSED_REPLAY = 4;
+  TURRET_RESULT_REFUSED_BUDGET = 5;
+  TURRET_RESULT_FAILED = 6;
+}
+
+// ReflexRequest is a locally-triggered, unsigned reflex action.
+message ReflexRequest {
+  string request_id = 1;
+  Action action = 2;
+  string target = 3;
+  int64 ttl_seconds = 4;
+  int32 pid = 5;
+  string exe_path = 6;
+  // ID of the rule that triggered the reflex.
+  string rule_id = 7;
+}
+
+// TurretRequest is either a local reflex or a Core-signed command.
+message TurretRequest {
+  oneof kind {
+    ReflexRequest reflex = 1;
+    SignedCommand signed = 2;
+  }
+}
+
+// TurretResponse reports what Turret did with a request.
+message TurretResponse {
+  // request_id for reflexes, command_id for signed commands.
+  string id = 1;
+  TurretResult result = 2;
+  string detail = 3;
+}

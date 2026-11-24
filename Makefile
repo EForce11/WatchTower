@@ -1,4 +1,4 @@
-.PHONY: proto build test integration-test integration-test-race clean proto-clean run-core run-sentry run-interceptor dev-deps fmt lint cover cover-html check-coverage help all
+.PHONY: proto proto-lint proto-check build test integration-test integration-test-race clean proto-clean run-core run-sentry run-interceptor dev-deps fmt lint cover cover-html check-coverage help all
 
 # Make `go install`ed tools (protoc-gen-go, protoc-gen-go-grpc) visible
 # even when $(go env GOPATH)/bin is not on the user's shell PATH.
@@ -9,11 +9,17 @@ all: build
 
 # Compile protobuf
 proto:
-	@echo "🔨 Compiling protobuf..."
-	protoc --go_out=. --go_opt=module=github.com/EForce11/WatchTower \
-	       --go-grpc_out=. --go-grpc_opt=module=github.com/EForce11/WatchTower \
-	       pkg/protocol/agent.proto
-	@echo "✅ Protobuf compiled"
+	@echo "🔨 Generating protobuf..."
+	buf generate
+	@echo "✅ Protobuf generated"
+
+# Lint protobuf definitions
+proto-lint:
+	buf lint
+
+# Lint, regenerate, and fail if committed generated code is stale
+proto-check:
+	buf lint && buf generate && git diff --exit-code -- pkg/synapse
 
 # Build all binaries
 build: proto
@@ -73,8 +79,10 @@ run-interceptor: build
 # Install development dependencies
 dev-deps:
 	@echo "📦 Installing development dependencies..."
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
+	go install github.com/bufbuild/buf/cmd/buf@v1.50.0
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 	@echo "✅ Dependencies installed"
 
 # Format code
@@ -117,7 +125,7 @@ help:
 	@echo ""
 	@echo "Build:"
 	@echo "  make build              - Build all binaries"
-	@echo "  make proto              - Compile protobuf"
+	@echo "  make proto              - Generate protobuf (buf)"
 	@echo "  make clean              - Remove build artifacts"
 	@echo ""
 	@echo "Run:"
