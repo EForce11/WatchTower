@@ -73,6 +73,10 @@ func LoadDir(fsys fs.FS) ([]Rule, error) {
 		if err != nil {
 			return err
 		}
+		if !d.IsDir() && strings.HasSuffix(p, ".yaml") && p != mappingFile {
+			errs = append(errs, fmt.Errorf("%s: rule files must use .yml", p))
+			return nil
+		}
 		if d.IsDir() || !strings.HasSuffix(p, ".yml") || strings.HasSuffix(p, samplesSuffix) {
 			return nil
 		}
@@ -97,12 +101,16 @@ func LoadDir(fsys fs.FS) ([]Rule, error) {
 				r.Scope = "agent"
 			}
 			switch {
+			case raw.Detection != nil && raw.Corr != nil:
+				errs = append(errs, fmt.Errorf("%s: document %d: has both detection and correlation", p, i))
+				continue
 			case raw.Detection != nil:
 				r.Fields = detectionFields(raw.Detection)
 			case raw.Corr != nil:
 				r.Correlates = raw.Corr.Rules
 			default:
 				errs = append(errs, fmt.Errorf("%s: document %d: neither detection nor correlation", p, i))
+				continue
 			}
 			out = append(out, r)
 		}

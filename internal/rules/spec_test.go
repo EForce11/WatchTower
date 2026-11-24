@@ -123,3 +123,26 @@ func TestLoadDirMultiDocAndDefaults(t *testing.T) {
 		t.Fatalf("unexpected rules: %+v", rs)
 	}
 }
+
+func TestLoadDirRejectsYamlExtension(t *testing.T) {
+	fsys := fstest.MapFS{
+		"a.yaml":           &fstest.MapFile{Data: []byte(detRule(idA, "low", "", "class"))},
+		"wes-mapping.yaml": &fstest.MapFile{Data: []byte("class: class\n")},
+	}
+	_, err := LoadDir(fsys)
+	if err == nil || !strings.Contains(err.Error(), "a.yaml") || !strings.Contains(err.Error(), ".yml") {
+		t.Fatalf("want error naming a.yaml, got %v", err)
+	}
+	if strings.Contains(err.Error(), "wes-mapping") {
+		t.Fatalf("wes-mapping.yaml must be allowed: %v", err)
+	}
+}
+
+func TestLoadDirDetectionAndCorrelation(t *testing.T) {
+	both := detRule(idA, "low", "", "class") + "correlation:\n  type: event_count\n  rules: [" + idB + "]\n"
+	fsys := fstest.MapFS{"both.yml": &fstest.MapFile{Data: []byte(both)}}
+	_, err := LoadDir(fsys)
+	if err == nil || !strings.Contains(err.Error(), "both.yml") || !strings.Contains(err.Error(), "both") {
+		t.Fatalf("want error naming both.yml, got %v", err)
+	}
+}
