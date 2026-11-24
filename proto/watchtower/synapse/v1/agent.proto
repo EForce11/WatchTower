@@ -1,0 +1,98 @@
+// AgentService: the Sentry-to-Core gRPC contract (mTLS).
+syntax = "proto3";
+
+package watchtower.synapse.v1;
+
+import "google/protobuf/timestamp.proto";
+import "watchtower/synapse/v1/command.proto";
+import "watchtower/synapse/v1/event.proto";
+import "watchtower/synapse/v1/ipc.proto";
+
+option go_package = "github.com/EForce11/WatchTower/pkg/synapse/v1;synapsev1";
+
+// AgentStatus is the lifecycle state of an agent as seen by Core.
+enum AgentStatus {
+  AGENT_STATUS_UNSPECIFIED = 0;
+  AGENT_STATUS_ACTIVE = 1;
+  AGENT_STATUS_DEGRADED = 2;
+  AGENT_STATUS_SHUTDOWN = 3;
+}
+
+// CollectorTier is the process-collection tier an agent is running.
+enum CollectorTier {
+  COLLECTOR_TIER_UNSPECIFIED = 0;
+  COLLECTOR_TIER_A = 1;
+  COLLECTOR_TIER_B = 2;
+  COLLECTOR_TIER_C = 3;
+}
+
+service AgentService {
+  // Heartbeat reports agent liveness and ruleset versions.
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // EnrollAgent exchanges an enrollment token and CSR for a certificate.
+  rpc EnrollAgent(EnrollAgentRequest) returns (EnrollAgentResponse);
+  // StreamEvents uploads event batches; Core acknowledges the last batch.
+  rpc StreamEvents(stream StreamEventsRequest) returns (StreamEventsResponse);
+  // CommandStream delivers signed commands to the agent.
+  rpc CommandStream(CommandStreamRequest) returns (stream CommandStreamResponse);
+  // ReportCommandResult reports Turret's outcome for a command.
+  rpc ReportCommandResult(ReportCommandResultRequest) returns (ReportCommandResultResponse);
+}
+
+message HeartbeatRequest {
+  string agent_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string agent_version = 3;
+  // Version of the detection ruleset the agent holds.
+  uint64 rule_version = 4;
+  // Version of the IOC set the agent holds.
+  uint64 ioc_version = 5;
+  CollectorTier collector_tier = 6;
+}
+
+message HeartbeatResponse {
+  AgentStatus status = 1;
+  google.protobuf.Timestamp server_time = 2;
+}
+
+message EnrollAgentRequest {
+  // One-time enrollment token.
+  string token = 1;
+  // DER-encoded PKCS#10 certificate signing request.
+  bytes csr_der = 2;
+  string hostname = 3;
+  string agent_version = 4;
+}
+
+message EnrollAgentResponse {
+  string agent_id = 1;
+  // DER-encoded signed agent certificate.
+  bytes certificate_der = 2;
+  // DER-encoded CA chain.
+  bytes ca_chain_der = 3;
+}
+
+message StreamEventsRequest {
+  EventBatch batch = 1;
+}
+
+message StreamEventsResponse {
+  // Highest batch_seq Core has durably accepted.
+  uint64 last_batch_seq = 1;
+}
+
+message CommandStreamRequest {
+  string agent_id = 1;
+}
+
+message CommandStreamResponse {
+  SignedCommand command = 1;
+}
+
+message ReportCommandResultRequest {
+  string command_id = 1;
+  TurretResult result = 2;
+  string detail = 3;
+}
+
+message ReportCommandResultResponse {}

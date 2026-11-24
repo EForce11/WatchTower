@@ -1,0 +1,63 @@
+// Signed response commands issued by Core and verified by Turret.
+syntax = "proto3";
+
+package watchtower.synapse.v1;
+
+option go_package = "github.com/EForce11/WatchTower/pkg/synapse/v1;synapsev1";
+
+// Action is a response action a command can request.
+enum Action {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_RATE_LIMIT = 1;
+  ACTION_BAN_TEMP = 2;
+  ACTION_UNBAN = 3;
+  ACTION_KILL_TEMP_MALWARE = 4;
+  ACTION_BAN_PERM = 5;
+  ACTION_KILL_PROCESS = 6;
+  ACTION_ISOLATE_HOST = 7;
+  ACTION_RELEASE_HOST = 8;
+}
+
+// SignatureScheme identifies how a SignedCommand was signed.
+enum SignatureScheme {
+  SIGNATURE_SCHEME_UNSPECIFIED = 0;
+  SIGNATURE_SCHEME_ED25519 = 1;
+  SIGNATURE_SCHEME_WEBAUTHN_ES256 = 2;
+}
+
+// CommandPayload is the signed body of a command.
+message CommandPayload {
+  // UUIDv7.
+  string command_id = 1;
+  // Must equal the local agent ID.
+  string agent_id = 2;
+  // Unix seconds.
+  int64 issued_at = 3;
+  // Unix seconds. At most issued_at + 120 s (automation) or + 1 h (admin approval).
+  int64 expires_at = 4;
+  Action action = 5;
+  // IP, CIDR, or "pid:<n>".
+  string target = 6;
+  // Expected executable path of the target process.
+  string target_exec = 7;
+  // Expected start time of the target process (guards against PID reuse).
+  int64 target_start_time = 8;
+  int64 ttl_seconds = 9;
+}
+
+// SignedCommand carries a serialized CommandPayload and its signature.
+message SignedCommand {
+  // Serialized CommandPayload. The signature covers these exact bytes.
+  bytes payload = 1;
+  bytes signature = 2;
+  string key_id = 3;
+  SignatureScheme scheme = 4;
+  // Set only when scheme is SIGNATURE_SCHEME_WEBAUTHN_ES256.
+  WebAuthnAssertion webauthn = 5;
+}
+
+// WebAuthnAssertion holds the authenticator data needed to verify a WebAuthn signature.
+message WebAuthnAssertion {
+  bytes authenticator_data = 1;
+  bytes client_data_json = 2;
+}

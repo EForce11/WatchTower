@@ -1,0 +1,130 @@
+// WatchTower Event Schema (WES): the common event envelope and entities.
+syntax = "proto3";
+
+package watchtower.synapse.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/EForce11/WatchTower/pkg/synapse/v1;synapsev1";
+
+// EventClass is the WES event class (OCSF-inspired).
+enum EventClass {
+  EVENT_CLASS_UNSPECIFIED = 0;
+  EVENT_CLASS_AUTHENTICATION = 1;
+  EVENT_CLASS_HTTP_ACTIVITY = 2;
+  EVENT_CLASS_PROCESS_ACTIVITY = 3;
+  EVENT_CLASS_NETWORK_ACTIVITY = 4;
+  EVENT_CLASS_FILE_ACTIVITY = 5;
+  EVENT_CLASS_METRIC_SAMPLE = 6;
+  EVENT_CLASS_DETECTION_FINDING = 7;
+}
+
+// Severity of an event or finding.
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_INFO = 1;
+  SEVERITY_LOW = 2;
+  SEVERITY_MEDIUM = 3;
+  SEVERITY_HIGH = 4;
+  SEVERITY_CRITICAL = 5;
+}
+
+// AuthOutcome is the result of an authentication attempt.
+enum AuthOutcome {
+  AUTH_OUTCOME_UNSPECIFIED = 0;
+  AUTH_OUTCOME_SUCCESS = 1;
+  AUTH_OUTCOME_FAILURE = 2;
+}
+
+// PackageStatus is a file's state relative to the package manager database.
+enum PackageStatus {
+  PACKAGE_STATUS_UNSPECIFIED = 0;
+  PACKAGE_STATUS_CONSISTENT = 1;
+  PACKAGE_STATUS_MODIFIED = 2;
+  PACKAGE_STATUS_UNOWNED = 3;
+}
+
+// Event is the common envelope for every WES event.
+message Event {
+  // UUIDv7, generated on the agent.
+  string event_id = 1;
+  // When the event occurred.
+  google.protobuf.Timestamp time = 2;
+  // ID of the agent that produced the event.
+  string agent_id = 3;
+  EventClass class = 4;
+  Severity severity = 5;
+  // Source endpoint.
+  Endpoint src = 6;
+  // Destination endpoint.
+  Endpoint dst = 7;
+  User user = 8;
+  Process process = 9;
+  File file = 10;
+  Http http = 11;
+  Auth auth = 12;
+  // Bounded extras: at most 16 keys, at most 256 bytes per value.
+  map<string, string> attrs = 13;
+  // Sanitized raw log excerpt, at most 512 bytes. Optional.
+  string raw_excerpt = 14;
+}
+
+// Endpoint is a network endpoint.
+message Endpoint {
+  string ip = 1;
+  uint32 port = 2;
+}
+
+// User is an account identity.
+message User {
+  string name = 1;
+  uint32 uid = 2;
+}
+
+// Process describes a process.
+message Process {
+  int32 pid = 1;
+  int32 ppid = 2;
+  string exe = 3;
+  // Truncated command line.
+  string cmdline = 4;
+  uint32 uid = 5;
+  // Process start time: /proc/<pid>/stat field 22 (clock ticks since boot).
+  int64 start_time = 6;
+  string parent_exe = 7;
+}
+
+// File describes a file-system object.
+message File {
+  string path = 1;
+  // Raw 32-byte SHA-256 digest.
+  bytes sha256 = 2;
+  string owner = 3;
+  uint32 mode = 4;
+  PackageStatus package_status = 5;
+}
+
+// Http describes an HTTP request.
+message Http {
+  string method = 1;
+  // Request path; the query string is excluded by default.
+  string path = 2;
+  uint32 status = 3;
+  // Truncated user agent.
+  string user_agent = 4;
+}
+
+// Auth describes an authentication attempt.
+message Auth {
+  AuthOutcome outcome = 1;
+  string method = 2;
+  string service = 3;
+}
+
+// EventBatch is a sequenced group of events sent by an agent.
+message EventBatch {
+  string agent_id = 1;
+  // Monotonic per-agent sequence number, used for acknowledgement.
+  uint64 batch_seq = 2;
+  repeated Event events = 3;
+}
