@@ -19,9 +19,21 @@ $$;
 -- TimescaleDB refuses to create background policy jobs (compression/retention)
 -- owned by a role that cannot log in ("permission denied to start background
 -- process"). wt_owner therefore needs LOGIN; it has no password, so it cannot
--- authenticate by password. Keep pg_hba.conf from allowing passwordless
--- (trust) access for wt_owner.
+-- authenticate by password. pg_hba.conf must not allow any passwordless method
+-- (trust, peer, ident, cert) for wt_owner. Add explicit first-match lines:
+--   host  all  wt_owner  0.0.0.0/0  reject
+--   host  all  wt_owner  ::/0       reject
+--   local all  wt_owner             reject
+-- Background workers (policy jobs) do not go through pg_hba, so these lines do
+-- not break compression/retention jobs. Migrations reach wt_owner via SET ROLE
+-- from an administrative connection.
 ALTER ROLE wt_owner LOGIN;
+
+-- PostgreSQL <= 14 grants CREATE on schema public to PUBLIC. Without this
+-- revoke, wt_core/wt_grafana could plant functions (e.g. public.create_hypertable)
+-- that a later migration would execute as wt_owner (CVE-2018-1058 pattern).
+-- No-op on PostgreSQL 15+.
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 
 GRANT CREATE, USAGE ON SCHEMA public TO wt_owner;
 GRANT USAGE ON SCHEMA public TO wt_core, wt_grafana;

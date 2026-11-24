@@ -34,6 +34,9 @@ func newTestDB(t *testing.T) (dbURL string, conn *pgx.Conn) {
 	t.Helper()
 	base := os.Getenv("WT_TEST_DATABASE_URL")
 	if base == "" {
+		if os.Getenv("WT_REQUIRE_DB") == "1" {
+			t.Fatal("WT_REQUIRE_DB=1 but WT_TEST_DATABASE_URL is not set")
+		}
 		t.Skip("WT_TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
@@ -178,6 +181,24 @@ func TestAuditLogAppendOnly(t *testing.T) {
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
 			t.Errorf("%s: err = %v, want SQLSTATE 42501", stmt, err)
+		}
+	}
+}
+
+func TestPublicSchemaCreateRevoked(t *testing.T) {
+	conn := migrated(t)
+	ctx := context.Background()
+	for _, role := range []string{"wt_core", "wt_grafana"} {
+		if _, err := conn.Exec(ctx, "SET ROLE "+role); err != nil {
+			t.Fatal(err)
+		}
+		_, err := conn.Exec(ctx, "CREATE TABLE public.x()")
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "42501" {
+			t.Errorf("%s CREATE TABLE: err = %v, want SQLSTATE 42501", role, err)
+		}
+		if _, err := conn.Exec(ctx, "RESET ROLE"); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
