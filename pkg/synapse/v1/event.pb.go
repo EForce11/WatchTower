@@ -271,7 +271,8 @@ type Event struct {
 	File    *File     `protobuf:"bytes,10,opt,name=file,proto3" json:"file,omitempty"`
 	Http    *Http     `protobuf:"bytes,11,opt,name=http,proto3" json:"http,omitempty"`
 	Auth    *Auth     `protobuf:"bytes,12,opt,name=auth,proto3" json:"auth,omitempty"`
-	// Bounded extras: at most 16 keys, at most 256 bytes per value.
+	// Bounded extras: at most 16 keys, at most 64 bytes per key,
+	// at most 256 bytes per value.
 	Attrs map[string]string `protobuf:"bytes,13,rep,name=attrs,proto3" json:"attrs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Sanitized raw log excerpt, at most 512 bytes. Optional.
 	RawExcerpt    string `protobuf:"bytes,14,opt,name=raw_excerpt,json=rawExcerpt,proto3" json:"raw_excerpt,omitempty"`

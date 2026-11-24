@@ -63,7 +63,8 @@ message Event {
   File file = 10;
   Http http = 11;
   Auth auth = 12;
-  // Bounded extras: at most 16 keys, at most 256 bytes per value.
+  // Bounded extras: at most 16 keys, at most 64 bytes per key,
+  // at most 256 bytes per value.
   map<string, string> attrs = 13;
   // Sanitized raw log excerpt, at most 512 bytes. Optional.
   string raw_excerpt = 14;

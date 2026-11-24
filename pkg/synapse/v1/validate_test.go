@@ -42,6 +42,8 @@ func TestValidateEvent(t *testing.T) {
 		{"unspecified class", func(e *synapsev1.Event) { e.Class = synapsev1.EventClass_EVENT_CLASS_UNSPECIFIED }, synapsev1.ErrMissingField},
 		{"17 attrs", func(e *synapsev1.Event) { e.Attrs = attrs(17) }, synapsev1.ErrAttrsTooMany},
 		{"16 attrs", func(e *synapsev1.Event) { e.Attrs = attrs(16) }, nil},
+		{"attr key 64 bytes", func(e *synapsev1.Event) { e.Attrs = map[string]string{strings.Repeat("k", 64): "v"} }, nil},
+		{"attr key 65 bytes", func(e *synapsev1.Event) { e.Attrs = map[string]string{strings.Repeat("k", 65): "v"} }, synapsev1.ErrAttrKeyTooLong},
 		{"attr value 257 bytes", func(e *synapsev1.Event) { e.Attrs = map[string]string{"k": strings.Repeat("a", 257)} }, synapsev1.ErrAttrValueTooLong},
 		{"attr value 256 bytes", func(e *synapsev1.Event) { e.Attrs = map[string]string{"k": strings.Repeat("a", 256)} }, nil},
 		{"attr value 129 two-byte runes", func(e *synapsev1.Event) { e.Attrs = map[string]string{"k": strings.Repeat("é", 129)} }, synapsev1.ErrAttrValueTooLong},
