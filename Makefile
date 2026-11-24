@@ -1,4 +1,4 @@
-.PHONY: verify proto proto-lint proto-check build test integration-test integration-test-race clean run-core run-sentry dev-deps fmt lint cover cover-html check-coverage help all
+.PHONY: verify proto proto-lint proto-check build test integration-test integration-test-race clean run-core run-sentry dev-deps test-rules fmt lint cover cover-html check-coverage help all
 
 # Make `go install`ed tools (protoc-gen-go, protoc-gen-go-grpc) visible
 # even when $(go env GOPATH)/bin is not on the user's shell PATH.
@@ -26,7 +26,9 @@ verify: proto-check
 	@echo "Verifying (CGO_ENABLED=0 build, lint, test)..."
 	CGO_ENABLED=0 go build ./...
 	$(MAKE) lint
-	$(MAKE) test
+	@test -n "$$WT_TEST_DATABASE_URL" || echo "⚠️  WT_TEST_DATABASE_URL not set: migration tests skipped"
+	go test -race ./internal/... ./pkg/...
+	go test ./test/integration/
 	@echo "Verify complete"
 
 # Build all binaries
@@ -44,6 +46,10 @@ test:
 	@echo "🧪 Running tests..."
 	go test -v ./...
 	@echo "✅ Tests passed"
+
+# Run rule-pack tests
+test-rules:
+	go test ./internal/rules/
 
 # Run integration test only
 integration-test:
@@ -123,7 +129,7 @@ help:
 	@echo "Build:"
 	@echo "  make build              - Build all binaries"
 	@echo "  make proto              - Generate protobuf (buf)"
-	@echo "  make verify             - Run the CI gate locally (proto-check, build, lint, test)"
+	@echo "  make verify             - Run the CI gate locally (proto-check, build, lint, race tests; DB tests need WT_TEST_DATABASE_URL)"
 	@echo "  make clean              - Remove build artifacts"
 	@echo ""
 	@echo "Run:"
@@ -132,6 +138,7 @@ help:
 	@echo ""
 	@echo "Test:"
 	@echo "  make test               - Run all tests"
+	@echo "  make test-rules         - Run rule-pack tests"
 	@echo "  make integration-test   - Run integration test"
 	@echo "  make cover              - Generate coverage report (terminal)"
 	@echo "  make cover-html         - Open coverage report in browser"
