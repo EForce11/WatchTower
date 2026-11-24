@@ -85,41 +85,51 @@ func LoadDir(fsys fs.FS) ([]Rule, error) {
 			errs = append(errs, fmt.Errorf("%s: %w", p, err))
 			return nil
 		}
-		dec := yaml.NewDecoder(bytes.NewReader(b))
-		for i := 0; ; i++ {
-			var raw rawRule
-			err := dec.Decode(&raw)
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			if err != nil {
-				errs = append(errs, fmt.Errorf("%s: document %d: %w", p, i, err))
-				break
-			}
-			r := Rule{Path: p, Title: raw.Title, ID: raw.ID, Level: raw.Level, Scope: raw.Custom.Scope}
-			if r.Scope == "" {
-				r.Scope = "agent"
-			}
-			switch {
-			case raw.Detection != nil && raw.Corr != nil:
-				errs = append(errs, fmt.Errorf("%s: document %d: has both detection and correlation", p, i))
-				continue
-			case raw.Detection != nil:
-				r.Fields = detectionFields(raw.Detection)
-			case raw.Corr != nil:
-				r.Correlates = raw.Corr.Rules
-			default:
-				errs = append(errs, fmt.Errorf("%s: document %d: neither detection nor correlation", p, i))
-				continue
-			}
-			out = append(out, r)
-		}
+		rules, perrs := parseRules(p, b)
+		out = append(out, rules...)
+		errs = append(errs, perrs...)
 		return nil
 	})
 	if walkErr != nil {
 		errs = append(errs, walkErr)
 	}
 	return out, errors.Join(errs...)
+}
+
+// parseRules decodes every YAML document in b into a Rule.
+func parseRules(p string, b []byte) ([]Rule, []error) {
+	var out []Rule
+	var errs []error
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	for i := 0; ; i++ {
+		var raw rawRule
+		err := dec.Decode(&raw)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: document %d: %w", p, i, err))
+			break
+		}
+		r := Rule{Path: p, Title: raw.Title, ID: raw.ID, Level: raw.Level, Scope: raw.Custom.Scope}
+		if r.Scope == "" {
+			r.Scope = "agent"
+		}
+		switch {
+		case raw.Detection != nil && raw.Corr != nil:
+			errs = append(errs, fmt.Errorf("%s: document %d: has both detection and correlation", p, i))
+			continue
+		case raw.Detection != nil:
+			r.Fields = detectionFields(raw.Detection)
+		case raw.Corr != nil:
+			r.Correlates = raw.Corr.Rules
+		default:
+			errs = append(errs, fmt.Errorf("%s: document %d: neither detection nor correlation", p, i))
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, errs
 }
 
 func detectionFields(det map[string]interface{}) []string {
