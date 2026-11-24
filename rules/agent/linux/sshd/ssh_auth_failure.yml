@@ -1,0 +1,7 @@
+title: SSH authentication failure
+id: 8f0c6c1e-1f6b-4c3e-9a3e-0b5f8e6b2a11
+logsource: { product: linux, service: sshd }
+detection:
+  sel: { class: authentication, auth.service: sshd, auth.outcome: failure }
+  condition: sel
+level: low

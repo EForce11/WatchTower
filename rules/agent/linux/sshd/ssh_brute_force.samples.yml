@@ -1,0 +1,6 @@
+# Phase 0: presence/parseability only. Each event is a WES field map; the
+# engine (Phase 2) will treat a match entry as a burst of >= 5 failures.
+match:
+  - { class: authentication, auth.service: sshd, auth.outcome: failure, src.ip: 203.0.113.7, count: 5 }
+no_match:
+  - { class: authentication, auth.service: sshd, auth.outcome: failure, src.ip: 203.0.113.7, count: 4 }
