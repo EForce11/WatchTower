@@ -219,8 +219,8 @@ func TestMigrateWithoutOwnerRole(t *testing.T) {
 	t.Cleanup(func() {
 		// Runs before the database drop; revoke grants so the role can be dropped.
 		c := context.Background()
-		admin.Exec(c, "REVOKE ALL ON SCHEMA public FROM "+role)
-		admin.Exec(c, "REVOKE ALL ON DATABASE "+dbName(t, dbURL)+" FROM "+role)
+		_, _ = admin.Exec(c, "REVOKE ALL ON SCHEMA public FROM "+role)
+		_, _ = admin.Exec(c, "REVOKE ALL ON DATABASE "+dbName(t, dbURL)+" FROM "+role)
 		if _, err := admin.Exec(c, "DROP ROLE IF EXISTS "+role); err != nil {
 			t.Errorf("drop role: %v", err)
 		}
