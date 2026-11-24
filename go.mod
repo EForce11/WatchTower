@@ -2,6 +2,8 @@ module github.com/EForce11/WatchTower
 
 go 1.25.0
 
+toolchain go1.25.14
+
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/jackc/pgx/v5 v5.13.0
