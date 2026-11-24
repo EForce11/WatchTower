@@ -9,10 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### In Progress
-- Phase 1: Real-time log monitoring via fsnotify
-- Phase 1: Security event pattern matching (regex-based rules)
-- Phase 1: Log event streaming from sentry to core
+### Added
+- Phase 0 contracts: `synapse.v1` protobuf definitions under `proto/watchtower/synapse/v1/` with generated code in `pkg/synapse/v1/`, managed with `buf`
+- `ValidateEvent` with event size limits
+- Length-prefixed IPC framing for local Sentry/Turret messages
+- SQL migrations (`deployments/sql`) and migrator in `internal/core/store`, with owner/runtime role split and TimescaleDB-backed tests
+- Rule layout (`rules/`), WES field mapping and structural validation in `internal/rules`
+- CI gates: lint, proto-check, static build, race-enabled tests, migration tests against TimescaleDB
+- `make verify` to run the CI gate locally
+
+### Changed
+- Go toolchain bumped to 1.25
+- Heartbeat now carries agent version and collector tier (moved onto `synapse.v1`)
+- Default Core address is `127.0.0.1:50051` (avoids `localhost` DNS stalls)
+- Integration test runs in about 10 seconds
+
+### Removed
+- `pkg/protocol` (replaced by `pkg/synapse/v1`)
+- `cmd/wt-interceptor`
+- `scripts/verify-phase0.sh` (replaced by `make verify`)
+- `proto-clean` and `run-interceptor` Make targets
 
 ---
 

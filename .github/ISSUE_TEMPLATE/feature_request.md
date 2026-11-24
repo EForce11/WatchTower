@@ -38,7 +38,7 @@ assignees: ["EForce11"]
 - [ ] `wt-sentry` — monitoring agent
 - [ ] `wt-cli` — CLI tool (Phase 3+)
 - [ ] `internal/sentry` — log watcher / pattern matcher
-- [ ] `pkg/protocol` — gRPC protocol definition
+- [ ] `pkg/synapse` — gRPC protocol definition
 - [ ] CI/CD pipeline
 - [ ] Documentation
 
