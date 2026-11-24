@@ -1,0 +1,12 @@
+# Sigma field name -> WES field path. Every field used in a rule's detection
+# block must appear here.
+class: class
+auth.service: auth.service
+auth.outcome: auth.outcome
+src.ip: src.ip
+user.name: user.name
+process.exe: process.exe
+process.cmdline: process.cmdline
+file.path: file.path
+http.path: http.path
+http.status: http.status

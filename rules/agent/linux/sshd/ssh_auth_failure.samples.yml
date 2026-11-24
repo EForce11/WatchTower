@@ -1,0 +1,5 @@
+match:
+  - { class: authentication, auth.service: sshd, auth.outcome: failure, src.ip: 203.0.113.7, user.name: root }
+no_match:
+  - { class: authentication, auth.service: sshd, auth.outcome: success, src.ip: 203.0.113.7, user.name: alice }
+  - { class: authentication, auth.service: sudo, auth.outcome: failure, user.name: alice }

@@ -1,0 +1,12 @@
+title: SSH brute force
+id: 3a2d7e5b-8a8b-4b0e-9a77-6d4f5e1c9b02
+correlation:
+  type: event_count
+  rules: [8f0c6c1e-1f6b-4c3e-9a3e-0b5f8e6b2a11]
+  group-by: [src.ip]
+  timespan: 60s
+  condition: { gte: 5 }
+level: medium
+custom:
+  scope: agent
+  response: { action: BAN_TEMP, ttl: 900s }
