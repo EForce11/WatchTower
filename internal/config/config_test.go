@@ -127,8 +127,8 @@ func TestDefaultSentryConfig(t *testing.T) {
 	if cfg.Agent.ID != "sentry-001" {
 		t.Errorf("default Agent.ID = %q, want %q", cfg.Agent.ID, "sentry-001")
 	}
-	if cfg.Core.Address != "localhost:50051" {
-		t.Errorf("default Core.Address = %q, want %q", cfg.Core.Address, "localhost:50051")
+	if cfg.Core.Address != "127.0.0.1:50051" {
+		t.Errorf("default Core.Address = %q, want %q", cfg.Core.Address, "127.0.0.1:50051")
 	}
 	if cfg.Heartbeat.IntervalSeconds != 10 {
 		t.Errorf("default IntervalSeconds = %d, want %d", cfg.Heartbeat.IntervalSeconds, 10)

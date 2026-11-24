@@ -100,7 +100,7 @@ func DefaultCoreConfig() CoreConfig {
 func DefaultSentryConfig() SentryConfig {
 	return SentryConfig{
 		Agent:     AgentConfig{ID: "sentry-001"},
-		Core:      CoreConnection{Address: "localhost:50051", MaxRetries: 3},
+		Core:      CoreConnection{Address: "127.0.0.1:50051", MaxRetries: 3},
 		Heartbeat: HeartbeatConfig{IntervalSeconds: 10, TimeoutSeconds: 5},
 		Log:       LogConfig{Level: "info"},
 	}
