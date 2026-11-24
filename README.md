@@ -6,7 +6,7 @@
   <img src="assets/banner.png" alt="WatchTower XDR Banner" width="100%">
 </p>
 
-  **Enterprise-grade Extended Detection and Response — open, auditable, self-hosted.**
+  **Self-hosted, explainable detection and response for small Linux server fleets.**
 
   <p align="center">
     <a href="https://github.com/EForce11/WatchTower/actions/workflows/ci.yml"><img src="https://github.com/EForce11/WatchTower/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
@@ -22,58 +22,71 @@
 
 ## What is WatchTower XDR?
 
-WatchTower is an **open-source XDR (Extended Detection and Response)** platform designed to be self-hosted, auditable, and extensible. It collects security telemetry from distributed agents, correlates events against threat patterns, and provides real-time alerting — without sending your data to a third party.
+WatchTower is an **open-source, self-hosted XDR (Extended Detection and Response)** platform for small-to-medium Linux server fleets (VPS, bare metal, hybrid; roughly 1–200 hosts). Agents collect host, application and network telemetry into one normalized event model. Core correlates weak signals **across layers and across hosts** and responds with bounded, reversible actions. Anything destructive needs a human.
 
-> **Status:** Active development — see the [Roadmap](#roadmap) for what's coming next.
+What sets it apart from per-host tools like Fail2Ban:
+
+- **Fleet immunity:** an attack detected on one host becomes a block on every host.
+- **One event model:** auth, web, process, file and network events share one schema with entities (host, user, process, IP, file).
+- **Detection-as-code:** rules are Sigma-compatible YAML, and each rule ships with positive and negative test samples.
+- **Deterministic authority:** a rule-based policy engine decides every action. AI is optional and advisory only.
+- **Bounded risk:** every automated action has a TTL. Destructive actions (kill process, isolate host, permanent ban) need an administrator's signature that Core cannot produce.
+
+> **Status:** Pre-alpha, single maintainer. The architecture was redesigned in **v3.2** (see [docs/architecture.md](docs/architecture.md)), and the code is moving from the `v0.2.0` prototype to that design. See the [Roadmap](#roadmap).
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        WatchTower XDR                           │
-│                                                                 │
-│  ┌──────────────┐   gRPC / mTLS   ┌──────────────────────────┐  │
-│  │  wt-sentry   │ ◄─────────────► │       wt-core            │  │
-│  │   (Agent)    │  Heartbeat 10s  │   (Central Server)       │  │
-│  │              │                 │   Port :50051            │  │
-│  │ - Log watch  │                 │ - Agent registry         │  │
-│  │ - Pattern    │                 │ - Event correlation      │  │
-│  │   matching   │                 │ - Alert dispatch         │  │
-│  └──────────────┘                 └──────────────────────────┘  │
-│                                                                 │
-│  ┌───────────────┐                                              │
-│  │    wt-cli     │  ← unified management interface (Phase 3+)   │
-│  └───────────────┘                                              │
+┌──────────────────────── Protected host ─────────────────────────┐
+│  wt-sentry  (unprivileged)          wt-turret  (root, no network)│
+│  - log watcher → normalized events  - self-preservation rules    │
+│  - read-only FIM + package verify   - signature & replay checks  │
+│  - process / network telemetry      - nftables table + rollback  │
+│  - local Sigma rules  ── reflex ──► - verified process kill      │
+└──────────────┬──────────────────────────────────────────────────┘
+               │ gRPC / mTLS (agent-initiated)
+┌──────────────▼──────────────── Core host ───────────────────────┐
+│  wt-core                                                         │
+│  - CSR enrollment CA, ingest, heartbeat, command stream          │
+│  - entity correlator + deterministic scoring (tiers T0–T3)       │
+│  - fleet immunity, baselines, CTI feeds                          │
+│  - signs reversible network actions only                         │
+│  PostgreSQL + TimescaleDB · Grafana · wt-frontal (optional AI)   │
+└──────────────┬──────────────────────────────────────────────────┘
+               │ WireGuard
+┌──────────────▼──────────── Administrator ───────────────────────┐
+│  wt-cli (signs destructive actions with the admin key) · ntfy    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-For full architecture details, see [docs/architecture.md](docs/architecture.md).
+For full architecture details, see [docs/architecture.md](docs/architecture.md). Earlier revisions are in [docs/archive/](docs/archive/).
 
 ---
 
 ## Features
 
-### ✅ Phase 0 — Core Communication (v0.2.0)
-- gRPC-based agent ↔ core communication
-- Heartbeat mechanism with health monitoring
-- Automatic reconnection with exponential backoff
-- Graceful shutdown handling
+### ✅ Done (v0.2.0 prototype)
+- gRPC agent ↔ core communication with heartbeat
+- Automatic reconnection with exponential backoff, graceful shutdown
+- Log file watcher (`fsnotify`), regex pattern matcher and `/proc` metrics collector, with unit tests
 - Integration test suite
 
-### ⏳ Phase 1 — Log Monitoring (In Progress)
-- Real-time log file monitoring via inotify (`fsnotify`)
-- Security event pattern matching (regex-based rules)
-- Log event streaming to core
+These pieces are being migrated to the v3.2 design. The regex patterns become Sigma rules, and the log watcher will emit normalized events.
 
-### 🔲 Upcoming Phases
-| Phase | Feature | Target |
-|-------|---------|--------|
-| 2 | TimescaleDB + Grafana dashboards | v0.4.0 |
-| 3 | Automated IP blocking (Turret) | v0.6.0 |
-| 4 | Anomaly detection engine | v0.8.0 |
-| 6 | Application WAF (Interceptor) | v1.0.0 |
+### 🔲 Planned (v3.2 roadmap)
+| Phase | Focus | Target |
+|-------|-------|--------|
+| 0 | Contracts: protobuf schemas, SQL migrations, rule layout | v0.3.0 |
+| 1 | `wt-turret`: safety layer, signed commands, nftables | v0.4.0 |
+| 2 | `wt-sentry`: normalized events, Sigma engine, FIM, reflex arc | v0.5.0 |
+| 3 | `wt-core`: enrollment, correlation, scoring, **fleet immunity** | v0.6.0 |
+| 4 | `wt-cli` + human-in-the-loop approvals, Grafana | v0.7.0 |
+| 5 | Process telemetry: auditd and eBPF collectors | v0.8.0 |
+| 6 | Baselines and anomaly signals | v0.9.0 |
+| 7 | Installer, hardening, production release | v1.0.0 |
+| 8 | Optional AI analyst, CTI feeds, decoys, passkey approvals | v1.1+ |
 
 ---
 
@@ -136,18 +149,23 @@ make integration-test-race
 ```
 WatchTower/
 ├── cmd/
-│   ├── wt-core/         # Central server (gRPC, event correlation)
-│   ├── wt-sentry/       # Monitoring agent (log watcher, heartbeat)
-│   └── wt-cli/          # Management CLI (Phase 3+, stub)
+│   ├── wt-core/         # Central server
+│   ├── wt-sentry/       # Monitoring agent
+│   ├── wt-cli/          # Management CLI (stub)
+│   └── wt-interceptor/  # Stub; removed in v3.2 (WAF dropped from scope)
 ├── internal/
-│   └── sentry/          # Agent internals (log watcher, pattern matcher)
+│   ├── config/          # Configuration loading
+│   └── sentry/          # Log watcher, pattern matcher, metrics
 ├── pkg/
-│   └── protocol/        # Protobuf definitions + generated gRPC code
+│   └── protocol/        # Protobuf + generated gRPC code (becomes pkg/synapse)
+├── configs/             # Example configuration files
 ├── test/
 │   └── integration/     # End-to-end integration tests
-├── docs/                # Architecture and deployment documentation
+├── docs/                # Architecture (v3.2) and archived revisions
 └── scripts/             # Developer helper scripts
 ```
+
+The target layout (`cmd/wt-turret`, `pkg/synapse`, `rules/`, `deployments/sql/`) and the plan for each existing package are in [§8 of the architecture document](docs/architecture.md#8-migration-from-the-current-codebase).
 
 ---
 
@@ -161,13 +179,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, branch namin
 
 ## Roadmap
 
-- [x] Phase 0: gRPC communication (v0.2.0)
-- [ ] Phase 1: Log monitoring & pattern detection
-- [ ] Phase 2: TimescaleDB & Grafana dashboards
-- [ ] Phase 3: Automated IP blocking (Turret)
-- [ ] Phase 4: Anomaly detection engine
-- [ ] Phase 6: Application WAF (Interceptor)
+- [x] v0.2.0 prototype: gRPC communication, heartbeat, log watcher
+- [ ] Phase 0: Contracts (protobuf schemas, SQL migrations, rule layout)
+- [ ] Phase 1: `wt-turret` safety-first enforcement
+- [ ] Phase 2: `wt-sentry` normalized telemetry and local detection
+- [ ] Phase 3: `wt-core` correlation and fleet immunity
+- [ ] Phase 4: `wt-cli` and human-in-the-loop approvals
+- [ ] Phase 5: Process telemetry (auditd, eBPF)
+- [ ] Phase 6: Baselines and anomaly signals
 - [ ] v1.0.0: Production release
+- [ ] v1.1+: Optional AI analyst, CTI feeds, decoys
+
+Details and verification gates for each phase: [docs/architecture.md §7](docs/architecture.md#7-development-roadmap).
 
 ---
 
