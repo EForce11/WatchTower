@@ -24,29 +24,36 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// AgentStatus is the lifecycle state of an agent as seen by Core.
+// AgentStatus is the operational state Core reports back to an agent.
 type AgentStatus int32
 
 const (
 	AgentStatus_AGENT_STATUS_UNSPECIFIED AgentStatus = 0
-	AgentStatus_AGENT_STATUS_ACTIVE      AgentStatus = 1
-	AgentStatus_AGENT_STATUS_DEGRADED    AgentStatus = 2
-	AgentStatus_AGENT_STATUS_SHUTDOWN    AgentStatus = 3
+	// Healthy and operating normally.
+	AgentStatus_AGENT_STATUS_OK AgentStatus = 1
+	// Core has a new configuration version for this agent.
+	AgentStatus_AGENT_STATUS_CONFIG_UPDATE_PENDING AgentStatus = 2
+	// The agent's mTLS certificate is nearing expiry; renew now.
+	AgentStatus_AGENT_STATUS_CERT_RENEWAL_REQUIRED AgentStatus = 3
+	// Administratively disabled by an operator.
+	AgentStatus_AGENT_STATUS_DISABLED AgentStatus = 4
 )
 
 // Enum value maps for AgentStatus.
 var (
 	AgentStatus_name = map[int32]string{
 		0: "AGENT_STATUS_UNSPECIFIED",
-		1: "AGENT_STATUS_ACTIVE",
-		2: "AGENT_STATUS_DEGRADED",
-		3: "AGENT_STATUS_SHUTDOWN",
+		1: "AGENT_STATUS_OK",
+		2: "AGENT_STATUS_CONFIG_UPDATE_PENDING",
+		3: "AGENT_STATUS_CERT_RENEWAL_REQUIRED",
+		4: "AGENT_STATUS_DISABLED",
 	}
 	AgentStatus_value = map[string]int32{
-		"AGENT_STATUS_UNSPECIFIED": 0,
-		"AGENT_STATUS_ACTIVE":      1,
-		"AGENT_STATUS_DEGRADED":    2,
-		"AGENT_STATUS_SHUTDOWN":    3,
+		"AGENT_STATUS_UNSPECIFIED":           0,
+		"AGENT_STATUS_OK":                    1,
+		"AGENT_STATUS_CONFIG_UPDATE_PENDING": 2,
+		"AGENT_STATUS_CERT_RENEWAL_REQUIRED": 3,
+		"AGENT_STATUS_DISABLED":              4,
 	}
 )
 
@@ -713,12 +720,13 @@ const file_watchtower_synapse_v1_agent_proto_rawDesc = "" +
 	"command_id\x18\x01 \x01(\tR\tcommandId\x12;\n" +
 	"\x06result\x18\x02 \x01(\x0e2#.watchtower.synapse.v1.TurretResultR\x06result\x12\x16\n" +
 	"\x06detail\x18\x03 \x01(\tR\x06detail\"\x1d\n" +
-	"\x1bReportCommandResultResponse*z\n" +
+	"\x1bReportCommandResultResponse*\xab\x01\n" +
 	"\vAgentStatus\x12\x1c\n" +
-	"\x18AGENT_STATUS_UNSPECIFIED\x10\x00\x12\x17\n" +
-	"\x13AGENT_STATUS_ACTIVE\x10\x01\x12\x19\n" +
-	"\x15AGENT_STATUS_DEGRADED\x10\x02\x12\x19\n" +
-	"\x15AGENT_STATUS_SHUTDOWN\x10\x03*q\n" +
+	"\x18AGENT_STATUS_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fAGENT_STATUS_OK\x10\x01\x12&\n" +
+	"\"AGENT_STATUS_CONFIG_UPDATE_PENDING\x10\x02\x12&\n" +
+	"\"AGENT_STATUS_CERT_RENEWAL_REQUIRED\x10\x03\x12\x19\n" +
+	"\x15AGENT_STATUS_DISABLED\x10\x04*q\n" +
 	"\rCollectorTier\x12\x1e\n" +
 	"\x1aCOLLECTOR_TIER_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10COLLECTOR_TIER_A\x10\x01\x12\x14\n" +
