@@ -27,7 +27,7 @@ func WriteFrame(w io.Writer, m proto.Message) error {
 		return ErrFrameTooLarge
 	}
 	buf := make([]byte, 4+len(body))
-	binary.BigEndian.PutUint32(buf, uint32(len(body)))
+	binary.BigEndian.PutUint32(buf, uint32(len(body))) //nolint:gosec // bounded by MaxFrameBytes above
 	copy(buf[4:], body)
 	if _, err := w.Write(buf); err != nil {
 		return fmt.Errorf("synapse: write frame: %w", err)

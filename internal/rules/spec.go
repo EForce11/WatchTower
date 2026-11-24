@@ -148,11 +148,12 @@ func detectionFields(det map[string]interface{}) []string {
 // fsys is the same rules root passed to LoadDir.
 func ValidateRules(rules []Rule, mapping map[string]string, fsys fs.FS) error {
 	var errs []error
-	bad := func(r Rule, format string, a ...any) {
+	bad := func(r *Rule, format string, a ...any) {
 		errs = append(errs, fmt.Errorf("%s: %s", r.Path, fmt.Sprintf(format, a...)))
 	}
 	ids := map[string]string{}
-	for _, r := range rules {
+	for i := range rules {
+		r := &rules[i]
 		if !uuidRE.MatchString(r.ID) {
 			bad(r, "id %q is not a uuid", r.ID)
 		} else if prev, dup := ids[r.ID]; dup {
@@ -162,7 +163,8 @@ func ValidateRules(rules []Rule, mapping map[string]string, fsys fs.FS) error {
 		}
 	}
 	checkedSamples := map[string]bool{}
-	for _, r := range rules {
+	for i := range rules {
+		r := &rules[i]
 		if !validLevels[r.Level] {
 			bad(r, "invalid level %q", r.Level)
 		}

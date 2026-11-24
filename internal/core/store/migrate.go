@@ -39,7 +39,7 @@ func Migrate(ctx context.Context, conn *pgx.Conn, fsys fs.FS) ([]string, error) 
 		return nil, fmt.Errorf("acquire migration lock: %w", err)
 	}
 	defer func() {
-		// Use a fresh context so unlock still runs if ctx was cancelled.
+		// Use a fresh context so unlock still runs if ctx was canceled.
 		_, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", migrationLockKey)
 	}()
 
@@ -63,7 +63,7 @@ func Migrate(ctx context.Context, conn *pgx.Conn, fsys fs.FS) ([]string, error) 
 		return nil, err
 	}
 
-	var applied []string
+	applied := make([]string, 0, len(files))
 	for _, f := range files {
 		version := strings.TrimSuffix(path.Base(f), ".sql")
 		if done[version] {
@@ -119,7 +119,7 @@ func inOwnerTx(ctx context.Context, conn *pgx.Conn, fn func(pgx.Tx) error) (err 
 	if _, err = tx.Exec(ctx, "SET LOCAL ROLE wt_owner"); err != nil {
 		return fmt.Errorf("set role wt_owner: %w", err)
 	}
-	if err = fn(tx); err != nil {
+	if err := fn(tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
