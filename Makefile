@@ -80,7 +80,7 @@ run-interceptor: build
 dev-deps:
 	@echo "📦 Installing development dependencies..."
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
 	go install github.com/bufbuild/buf/cmd/buf@v1.50.0
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8
 	@echo "✅ Dependencies installed"

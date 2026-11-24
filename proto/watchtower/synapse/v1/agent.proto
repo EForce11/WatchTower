@@ -10,12 +10,17 @@ import "watchtower/synapse/v1/ipc.proto";
 
 option go_package = "github.com/EForce11/WatchTower/pkg/synapse/v1;synapsev1";
 
-// AgentStatus is the lifecycle state of an agent as seen by Core.
+// AgentStatus is the operational state Core reports back to an agent.
 enum AgentStatus {
   AGENT_STATUS_UNSPECIFIED = 0;
-  AGENT_STATUS_ACTIVE = 1;
-  AGENT_STATUS_DEGRADED = 2;
-  AGENT_STATUS_SHUTDOWN = 3;
+  // Healthy and operating normally.
+  AGENT_STATUS_OK = 1;
+  // Core has a new configuration version for this agent.
+  AGENT_STATUS_CONFIG_UPDATE_PENDING = 2;
+  // The agent's mTLS certificate is nearing expiry; renew now.
+  AGENT_STATUS_CERT_RENEWAL_REQUIRED = 3;
+  // Administratively disabled by an operator.
+  AGENT_STATUS_DISABLED = 4;
 }
 
 // CollectorTier is the process-collection tier an agent is running.
