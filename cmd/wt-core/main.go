@@ -11,16 +11,17 @@ import (
 	"syscall"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/EForce11/WatchTower/internal/config"
-	pb "github.com/EForce11/WatchTower/pkg/protocol"
+	synapsev1 "github.com/EForce11/WatchTower/pkg/synapse/v1"
 )
 
 type server struct {
-	pb.UnimplementedAgentServiceServer
+	synapsev1.UnimplementedAgentServiceServer
 }
 
-func (s *server) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
+func (s *server) Heartbeat(ctx context.Context, req *synapsev1.HeartbeatRequest) (*synapsev1.HeartbeatResponse, error) {
 	if req.AgentId == "" {
 		return nil, fmt.Errorf("agent_id required")
 	}
@@ -28,10 +29,12 @@ func (s *server) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.H
 		return nil, fmt.Errorf("timestamp required")
 	}
 
-	log.Printf("Heartbeat from agent_id=%s, timestamp=%d", req.AgentId, req.Timestamp.Seconds)
+	log.Printf("Heartbeat from agent_id=%s, timestamp=%d version=%s tier=%s",
+		req.AgentId, req.Timestamp.Seconds, req.AgentVersion, req.CollectorTier)
 
-	resp := &pb.HeartbeatResponse{
-		Status: pb.AgentStatus_AGENT_STATUS_OK,
+	resp := &synapsev1.HeartbeatResponse{
+		Status:     synapsev1.AgentStatus_AGENT_STATUS_OK,
+		ServerTime: timestamppb.Now(),
 	}
 	return resp, nil
 }
@@ -58,7 +61,7 @@ func main() {
 	grpcServer := grpc.NewServer()
 
 	// 3. Register AgentService
-	pb.RegisterAgentServiceServer(grpcServer, &server{})
+	synapsev1.RegisterAgentServiceServer(grpcServer, &server{})
 
 	log.Printf("Starting WatchTower Core on %s", cfg.Server.ListenAddress)
 

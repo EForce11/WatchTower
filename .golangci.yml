@@ -67,7 +67,7 @@ issues:
         - unparam
 
     # Generated protobuf files: skip entirely
-    - path: "pkg/protocol/.*\\.pb\\.go"
+    - path: "pkg/synapse/.*\\.pb\\.go"
       linters:
         - all
 

@@ -11,22 +11,34 @@ import (
 	"time"
 )
 
-// TestPhase0_HeartbeatFlow tests end-to-end gRPC communication between
+// heartbeatWait derives the observation window from WT_HEARTBEAT_INTERVAL:
+// 1 immediate heartbeat + 7 ticks, plus slack. Defaults to 65s (10s interval).
+func heartbeatWait() time.Duration {
+	if v := os.Getenv("WT_HEARTBEAT_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d*7 + 2*time.Second
+		}
+	}
+	return 65 * time.Second
+}
+
+// hasVersionAndTier reports whether a Core heartbeat log line carries the
+// agent version and collector tier fields.
+func hasVersionAndTier(line string) bool {
+	return strings.Contains(line, "version=") && strings.Contains(line, "tier=")
+}
+
+// TestHeartbeatFlow tests end-to-end gRPC communication between
 // wt-core (server) and wt-sentry (client).
 //
 // Run with:
 //
 //	go test -v -timeout 90s ./test/integration/
-func TestPhase0_HeartbeatFlow(t *testing.T) {
-	// Calculate wait duration from configured heartbeat interval.
-	// With 1s interval: 1 immediate + 7 ticks in 8 seconds = 8 heartbeats.
-	// Default (10s interval): 1 immediate + 6 ticks in 65 seconds = 7 heartbeats.
-	waitDuration := 65 * time.Second
-	if v := os.Getenv("WT_HEARTBEAT_INTERVAL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			waitDuration = d*7 + 2*time.Second
-		}
-	}
+func TestHeartbeatFlow(t *testing.T) {
+	// Child processes inherit this; must be set before the wait is computed.
+	t.Setenv("WT_HEARTBEAT_INTERVAL", "1s")
+
+	waitDuration := heartbeatWait()
 
 	// Overall test budget: waitDuration + 10 s buffer for startup/shutdown.
 	ctx, cancel := context.WithTimeout(context.Background(), waitDuration+10*time.Second)
@@ -35,6 +47,7 @@ func TestPhase0_HeartbeatFlow(t *testing.T) {
 	// Thread-safe heartbeat counter.
 	var mu sync.Mutex
 	heartbeatCount := 0
+	richCount := 0 // heartbeat lines carrying version= and tier=
 
 	// -------------------------------------------------------------------------
 	// 1. Start wt-core
@@ -68,6 +81,9 @@ func TestPhase0_HeartbeatFlow(t *testing.T) {
 			if strings.Contains(line, "Heartbeat from") {
 				mu.Lock()
 				heartbeatCount++
+				if hasVersionAndTier(line) {
+					richCount++
+				}
 				count := heartbeatCount
 				mu.Unlock()
 				t.Logf("Heartbeat received (count: %d)", count)
@@ -83,7 +99,6 @@ func TestPhase0_HeartbeatFlow(t *testing.T) {
 	// -------------------------------------------------------------------------
 	t.Log("Starting Sentry...")
 	sentryCmd := exec.CommandContext(ctx, "go", "run", "../../cmd/wt-sentry/main.go")
-	sentryCmd.Env = append(os.Environ(), "WT_HEARTBEAT_INTERVAL=1s")
 
 	// Capture Sentry stderr for visibility (optional but helpful for debugging).
 	sentryStderr, err := sentryCmd.StderrPipe()
@@ -122,12 +137,16 @@ func TestPhase0_HeartbeatFlow(t *testing.T) {
 	// -------------------------------------------------------------------------
 	mu.Lock()
 	count := heartbeatCount
+	rich := richCount
 	mu.Unlock()
 
 	t.Logf("Final heartbeat count: %d", count)
 
 	if count < 6 {
 		t.Errorf("Expected at least 6 heartbeats, got %d", count)
+	}
+	if rich != count {
+		t.Errorf("Expected every heartbeat log line to contain version= and tier=, got %d of %d", rich, count)
 	}
 
 	// -------------------------------------------------------------------------
