@@ -480,7 +480,7 @@ Grafana is **optional**. It is for ad-hoc metric exploration through the read-on
 
 ### 4.1 WatchTower Event Schema (WES)
 
-OCSF-inspired: class names and core field names follow OCSF where practical, without claiming full OCSF compliance. Defined in `pkg/synapse/event.proto`.
+OCSF-inspired: class names and core field names follow OCSF where practical, without claiming full OCSF compliance. Defined in `proto/watchtower/synapse/v1/event.proto` (generated into `pkg/synapse/v1`).
 
 | WES class | OCSF analogue (class_uid) | Produced by |
 |---|---|---|
@@ -508,7 +508,7 @@ message Event {
   File     file       = 10;  // path, sha256, owner, mode, package_status
   Http     http       = 11;  // method, path (no query by default), status, user_agent (truncated)
   Auth     auth       = 12;  // outcome, method, service
-  map<string, string> attrs = 13;  // bounded: ≤ 16 keys, ≤ 256 bytes per value
+  map<string, string> attrs = 13;  // bounded: ≤ 16 keys, ≤ 64 bytes per key, ≤ 256 bytes per value
   string   raw_excerpt = 14; // sanitized, ≤ 512 bytes, optional
 }
 ```
@@ -561,10 +561,16 @@ CREATE EXTENSION IF NOT EXISTS timescaledb;
 --
 -- wt_owner needs LOGIN because TimescaleDB policy jobs (compression, retention)
 -- run as the table owner. It has no password, so pg_hba.conf must not allow any
--- passwordless method (trust, peer, ident, cert) for it. Add an explicit
--- first-match line:  host  all  wt_owner  all  reject
--- (and the equivalent `local` line). Migrations reach it via SET ROLE from an
--- administrative connection, never by logging in as wt_owner.
+-- passwordless method (trust, peer, ident, cert) for it. Add explicit
+-- first-match lines:
+--   host  all  wt_owner  0.0.0.0/0  reject
+--   host  all  wt_owner  ::/0       reject
+--   local all  wt_owner             reject
+-- Background workers do not go through pg_hba, so policy jobs keep working.
+-- Migrations reach it via SET ROLE from an administrative connection, never by
+-- logging in as wt_owner. bootstrap.sql also revokes CREATE on schema public
+-- from PUBLIC (PostgreSQL <= 14 default) so other roles cannot plant objects
+-- that migrations would resolve and run as wt_owner.
 
 -- 1. AGENTS
 CREATE TYPE agent_status AS ENUM ('PENDING', 'ALIVE', 'STALE', 'DEAD', 'ISOLATED', 'REVOKED');
@@ -890,7 +896,7 @@ Ordering principle: **ship the smallest thing that is already better than Fail2B
 
 | Phase | Version | Focus | Deliverables | Verification gate |
 |---|---|---|---|---|
-| **0** | v0.3.0 | Contracts | `pkg/synapse` (`event.proto`, `command.proto`, `agent.proto`, `ipc.proto`), `deployments/sql/` migrations with roles, `rules/` layout + `wes-mapping.yaml`, Makefile targets | `buf lint`/`protoc` generate cleanly; `CGO_ENABLED=0 go build ./...`; migrations apply on a fresh TimescaleDB in CI |
+| **0** | v0.3.0 | Contracts | `pkg/synapse` (`event.proto`, `command.proto`, `agent.proto`, `ipc.proto`), `deployments/sql/` migrations with roles, `rules/` layout + `wes-mapping.yaml`, Makefile targets | `buf lint` / `buf generate` run cleanly; `CGO_ENABLED=0 go build ./...`; migrations apply on a fresh TimescaleDB in CI |
 | **1** | v0.4.0 | `wt-turret` safety first | Safety layer, origin table, reflex budget, signature + replay verification, nftables table, `panic-flush`, verified kill | `go test -race ./internal/turret/...` 100% pass, including netns tests: self-ban refusal, path traversal refusal, forged/replayed/expired command refusal, `panic-flush` restores connectivity |
 | **2** | v0.5.0 | `wt-sentry` | LogWatcher → WES, Sigma subset engine + correlation, FIM + package verification, `/proc` metrics, Tier C process collector, Reflex Arc, enrollment client | Rule regression corpus (WordPress `.php`, `;` query strings, single SSH typo) passes; FIM ignores package-consistent upgrades in a Debian container test |
 | **3** | v0.6.0 | `wt-core` + demo stack | CSR enrollment, ingest, core rules, entity correlator, scoring/tiers, **Fleet Immunity**, Policy Engine, Automation Key signing, audit chain, `deployments/demo/` with attack simulator (§3.6.4) | E2E on the demo stack (3 agents): brute force on agent 1 → fleet ban on agents 2–3 within 10 s; whitelisted IP never banned; Core cannot produce a valid T3 command |
@@ -909,7 +915,7 @@ The current repository (`v0.2.0`, ~2.3k lines of Go) is small enough to restruct
 
 | Current | Decision | Target |
 |---|---|---|
-| `pkg/protocol/agent.proto` (+ generated) | Replace | `pkg/synapse/*.proto` (new WES and command contracts) |
+| `pkg/protocol/agent.proto` (+ generated) | Replace | `proto/watchtower/synapse/v1/*.proto` → `pkg/synapse/v1` (new WES and command contracts) |
 | `internal/config` | Keep, extend | `internal/config` (per-binary sections) |
 | `internal/sentry/logwatcher.go` (+ tests) | Keep, refactor | `internal/sentry/logwatcher` — output WES events instead of matched lines |
 | `internal/sentry/patterns.go` (+ tests) | Convert | `rules/*.yml` (Sigma); existing test cases become rule samples |
