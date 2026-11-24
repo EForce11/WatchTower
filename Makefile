@@ -1,4 +1,8 @@
-.PHONY: proto build test integration-test integration-test-race clean proto-clean run-core run-sentry run-turret run-interceptor dev-deps fmt lint cover cover-html check-coverage help all
+.PHONY: proto build test integration-test integration-test-race clean proto-clean run-core run-sentry run-interceptor dev-deps fmt lint cover cover-html check-coverage help all
+
+# Make `go install`ed tools (protoc-gen-go, protoc-gen-go-grpc) visible
+# even when $(go env GOPATH)/bin is not on the user's shell PATH.
+export PATH := $(shell go env GOPATH)/bin:$(PATH)
 
 # Default target
 all: build
@@ -14,10 +18,11 @@ proto:
 # Build all binaries
 build: proto
 	@echo "🔨 Building binaries..."
-	go build -o wt-core cmd/wt-core/main.go
-	go build -o wt-sentry cmd/wt-sentry/main.go
-	go build -o wt-turret cmd/wt-turret/main.go
-	go build -o wt-interceptor cmd/wt-interceptor/main.go
+	@for dir in cmd/*/; do \
+		name=$$(basename $$dir); \
+		echo "go build -o $$name ./$$dir"; \
+		go build -o $$name ./$$dir || exit 1; \
+	done
 	@echo "✅ Build complete"
 
 # Run all tests
@@ -59,11 +64,6 @@ run-core: build
 run-sentry: build
 	@echo "🚀 Starting WatchTower Sentry..."
 	./wt-sentry
-
-# Run Turret agent (stub)
-run-turret: build
-	@echo "🚀 Starting WatchTower Turret..."
-	./wt-turret
 
 # Run Interceptor agent (stub)
 run-interceptor: build
@@ -123,7 +123,6 @@ help:
 	@echo "Run:"
 	@echo "  make run-core           - Start Core server"
 	@echo "  make run-sentry         - Start Sentry agent"
-	@echo "  make run-turret         - Start Turret agent (stub)"
 	@echo "  make run-interceptor    - Start Interceptor agent (stub)"
 	@echo ""
 	@echo "Test:"
