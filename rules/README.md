@@ -26,7 +26,8 @@ Sigma-compatible YAML rules (see docs/architecture.md section 4.2).
     match:    [ <event>, ... ]   # must trigger the rule
     no_match: [ <event>, ... ]   # false-positive regression corpus
 
-Events are WES field maps. Both keys are required; either list may be empty.
+Events are WES field maps. Both keys are required and must be lists; write
+`[]` for an empty one (a bare `match:` is null and is rejected).
 Phase 0 checks presence and parseability only; the matching engine arrives in
 Phase 2.
 

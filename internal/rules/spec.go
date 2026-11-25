@@ -224,8 +224,9 @@ func checkSamples(fsys fs.FS, rulePath string) error {
 		if !ok {
 			return fmt.Errorf("samples file %s: missing %q", sp, key)
 		}
-		if _, isList := v.([]interface{}); !isList && v != nil {
-			return fmt.Errorf("samples file %s: %q must be a list", sp, key)
+		// A null section (`match:` with nothing after it) is not a list; use [] for empty.
+		if _, isList := v.([]interface{}); !isList {
+			return fmt.Errorf("samples file %s: %q must be a list (use [] for none)", sp, key)
 		}
 	}
 	return nil
