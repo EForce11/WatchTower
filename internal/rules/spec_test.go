@@ -81,6 +81,12 @@ func TestValidateRules(t *testing.T) {
 		{"samples missing no_match", map[string]string{
 			"a.yml": detRule(idA, "low", "", "class"), "a.samples.yml": "match: []\n",
 		}, "no_match"},
+		{"samples null match", map[string]string{
+			"a.yml": detRule(idA, "low", "", "class"), "a.samples.yml": "match:\nno_match: []\n",
+		}, `"match" must be a list`},
+		{"samples null no_match", map[string]string{
+			"a.yml": detRule(idA, "low", "", "class"), "a.samples.yml": "match: []\nno_match: null\n",
+		}, `"no_match" must be a list`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
