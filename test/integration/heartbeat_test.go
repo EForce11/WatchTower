@@ -3,8 +3,10 @@ package integration
 import (
 	"bufio"
 	"context"
+	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +22,35 @@ func heartbeatWait() time.Duration {
 		}
 	}
 	return 65 * time.Second
+}
+
+// buildBinary compiles ./cmd/<name> into dir and returns the binary path.
+// Building up front keeps compile time (slow on a cold CI cache) out of the
+// heartbeat observation window, and lets the test kill the real process
+// rather than a `go run` wrapper.
+func buildBinary(t *testing.T, dir, name string) string {
+	t.Helper()
+	out := filepath.Join(dir, name)
+	cmd := exec.Command("go", "build", "-o", out, "../../cmd/"+name)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build %s: %v\n%s", name, err, b)
+	}
+	return out
+}
+
+// waitForPort polls addr until it accepts TCP connections or timeout elapses.
+func waitForPort(t *testing.T, addr string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("Core did not start listening on %s within %v", addr, timeout)
 }
 
 // hasVersionAndTier reports whether a Core heartbeat log line carries the
@@ -40,6 +71,10 @@ func TestHeartbeatFlow(t *testing.T) {
 
 	waitDuration := heartbeatWait()
 
+	binDir := t.TempDir()
+	coreBin := buildBinary(t, binDir, "wt-core")
+	sentryBin := buildBinary(t, binDir, "wt-sentry")
+
 	// Overall test budget: waitDuration + 10 s buffer for startup/shutdown.
 	ctx, cancel := context.WithTimeout(context.Background(), waitDuration+10*time.Second)
 	defer cancel()
@@ -53,7 +88,7 @@ func TestHeartbeatFlow(t *testing.T) {
 	// 1. Start wt-core
 	// -------------------------------------------------------------------------
 	t.Log("Starting Core...")
-	coreCmd := exec.CommandContext(ctx, "go", "run", "../../cmd/wt-core/main.go")
+	coreCmd := exec.CommandContext(ctx, coreBin)
 
 	// Go's log package writes to stderr, so heartbeat lines appear on stderr.
 	coreStderr, err := coreCmd.StderrPipe()
@@ -91,14 +126,14 @@ func TestHeartbeatFlow(t *testing.T) {
 		}
 	}()
 
-	// Give Core time to bind on :50051 before Sentry tries to connect.
-	time.Sleep(2 * time.Second)
+	// Wait until Core accepts connections before starting Sentry.
+	waitForPort(t, "127.0.0.1:50051", 10*time.Second)
 
 	// -------------------------------------------------------------------------
 	// 2. Start wt-sentry
 	// -------------------------------------------------------------------------
 	t.Log("Starting Sentry...")
-	sentryCmd := exec.CommandContext(ctx, "go", "run", "../../cmd/wt-sentry/main.go")
+	sentryCmd := exec.CommandContext(ctx, sentryBin)
 
 	// Capture Sentry stderr for visibility (optional but helpful for debugging).
 	sentryStderr, err := sentryCmd.StderrPipe()
@@ -149,16 +184,8 @@ func TestHeartbeatFlow(t *testing.T) {
 		t.Errorf("Expected every heartbeat log line to contain version= and tier=, got %d of %d", rich, count)
 	}
 
-	// -------------------------------------------------------------------------
-	// 5. Clean shutdown
-	// -------------------------------------------------------------------------
-	t.Log("Shutting down components...")
-	if sentryCmd.Process != nil {
-		_ = sentryCmd.Process.Kill()
+	// Shutdown happens in the deferred Kill calls above.
+	if !t.Failed() {
+		t.Log("✅ Integration test passed")
 	}
-	if coreCmd.Process != nil {
-		_ = coreCmd.Process.Kill()
-	}
-
-	t.Log("✅ Integration test passed")
 }
