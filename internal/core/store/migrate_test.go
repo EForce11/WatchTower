@@ -203,6 +203,46 @@ func TestPublicSchemaCreateRevoked(t *testing.T) {
 	}
 }
 
+func TestMigrateNoMigrationFiles(t *testing.T) {
+	_, conn := newTestDB(t)
+	ctx := context.Background()
+	if err := Bootstrap(ctx, conn); err != nil {
+		t.Fatal(err)
+	}
+	// A missing or misnamed migrations directory must not report success.
+	fsys := fstest.MapFS{"migration/0001_typo_dir.sql": {Data: []byte("CREATE TABLE a (id int);")}}
+	_, err := Migrate(ctx, conn, fsys)
+	if !errors.Is(err, ErrNoMigrations) {
+		t.Fatalf("err = %v, want ErrNoMigrations", err)
+	}
+	if tables := queryStrings(t, conn, "SELECT tablename FROM pg_tables WHERE schemaname='public'"); len(tables) != 0 {
+		t.Fatalf("tables = %v, want none", tables)
+	}
+}
+
+func TestBootstrapConcurrent(t *testing.T) {
+	dbURL, _ := newTestDB(t)
+	ctx := context.Background()
+	const n = 4
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		go func() {
+			c, err := pgx.Connect(ctx, dbURL)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer func() { _ = c.Close(ctx) }()
+			errs <- Bootstrap(ctx, c)
+		}()
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("concurrent Bootstrap: %v", err)
+		}
+	}
+}
+
 func TestMigrateFailedFileRollsBack(t *testing.T) {
 	_, conn := newTestDB(t)
 	ctx := context.Background()
