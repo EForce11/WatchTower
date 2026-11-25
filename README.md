@@ -67,13 +67,19 @@ For full architecture details, see [docs/architecture.md](docs/architecture.md).
 
 ## Features
 
+### ✅ Done (v0.3.0, Phase 0: contracts)
+- `synapse.v1` protobuf contracts (`buf`), event validation and IPC framing
+- TimescaleDB schema migrations with an owner/runtime role split
+- Sigma rule layout with structural validation
+- CI gates: lint, proto drift, static build, race tests, integration and migration tests
+
 ### ✅ Done (v0.2.0 prototype)
 - gRPC agent ↔ core communication with heartbeat
 - Automatic reconnection with exponential backoff, graceful shutdown
 - Log file watcher (`fsnotify`), regex pattern matcher and `/proc` metrics collector, with unit tests
 - Integration test suite
 
-These pieces are being migrated to the v3.2 design. The regex patterns become Sigma rules, and the log watcher will emit normalized events.
+The prototype's log watcher and pattern matcher are migrated to the v3.2 design in Phase 2. The regex patterns become Sigma rules, and the log watcher will emit normalized events.
 
 ### 🔲 Planned (v3.2 roadmap)
 | Phase | Focus | Target |
@@ -186,7 +192,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, branch namin
 ## Roadmap
 
 - [x] v0.2.0 prototype: gRPC communication, heartbeat, log watcher
-- [ ] Phase 0: Contracts (protobuf schemas, SQL migrations, rule layout)
+- [x] Phase 0: Contracts (protobuf schemas, SQL migrations, rule layout) (v0.3.0)
 - [ ] Phase 1: `wt-turret` safety-first enforcement
 - [ ] Phase 2: `wt-sentry` normalized telemetry and local detection
 - [ ] Phase 3: `wt-core` correlation and fleet immunity
