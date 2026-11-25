@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] — 2026-11-25
+
+Phase 0 (Contracts) of the v3.2 architecture.
+
 ### Added
 - Phase 0 contracts: `synapse.v1` protobuf definitions under `proto/watchtower/synapse/v1/` with generated code in `pkg/synapse/v1/`, managed with `buf`
 - `ValidateEvent` with event size limits
@@ -16,19 +22,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SQL migrations (`deployments/sql`) and migrator in `internal/core/store`, with owner/runtime role split and TimescaleDB-backed tests
 - Rule layout (`rules/`), WES field mapping and structural validation in `internal/rules`
 - CI gates: lint, proto-check, static build, race-enabled tests, migration tests against TimescaleDB
-- `make verify` to run the CI gate locally
+- `make verify` to run the CI gate locally, and `make test-rules`
+- `Migrate` fails with `ErrNoMigrations` on an empty migration set; `Bootstrap` and `Migrate` share an advisory lock
 
 ### Changed
 - Go toolchain bumped to 1.25
 - Heartbeat now carries agent version and collector tier (moved onto `synapse.v1`)
 - Default Core address is `127.0.0.1:50051` (avoids `localhost` DNS stalls)
-- Integration test runs in about 10 seconds
+- Integration test builds the binaries first and waits for Core's port (reliable on cold CI caches)
+- `REVOKE CREATE ON SCHEMA public FROM PUBLIC` in bootstrap (PostgreSQL 14 hardening)
 
 ### Removed
 - `pkg/protocol` (replaced by `pkg/synapse/v1`)
 - `cmd/wt-interceptor`
 - `scripts/verify-phase0.sh` (replaced by `make verify`)
 - `proto-clean` and `run-interceptor` Make targets
+- Stray `opencode.json`
 
 ---
 
@@ -78,7 +87,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/EForce11/WatchTower/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/EForce11/WatchTower/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/EForce11/WatchTower/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/EForce11/WatchTower/compare/v0.2.0-alpha...v0.2.0
 [0.2.0-alpha]: https://github.com/EForce11/WatchTower/compare/v0.1.0...v0.2.0-alpha
 [0.1.0]: https://github.com/EForce11/WatchTower/releases/tag/v0.1.0
