@@ -1,4 +1,4 @@
-.PHONY: verify proto proto-lint proto-check build test integration-test integration-test-race clean run-core run-sentry dev-deps test-rules fmt lint cover cover-html check-coverage help all
+.PHONY: verify proto proto-lint proto-check build test integration-test integration-test-race clean run-core run-sentry dev-deps test-rules test-netns fmt lint cover cover-html check-coverage help all
 
 # Make `go install`ed tools (protoc-gen-go, protoc-gen-go-grpc) visible
 # even when $(go env GOPATH)/bin is not on the user's shell PATH.
@@ -50,6 +50,10 @@ test:
 # Run rule-pack tests
 test-rules:
 	go test ./internal/rules/
+
+# Run nftables netns tests (unprivileged: user + network namespace)
+test-netns:
+	unshare --user --map-root-user --net go test -tags netns -race ./internal/turret/nft/
 
 # Run integration test only
 integration-test:
@@ -139,6 +143,7 @@ help:
 	@echo "Test:"
 	@echo "  make test               - Run all tests"
 	@echo "  make test-rules         - Run rule-pack tests"
+	@echo "  make test-netns         - Run nftables tests in a network namespace"
 	@echo "  make integration-test   - Run integration test"
 	@echo "  make cover              - Generate coverage report (terminal)"
 	@echo "  make cover-html         - Open coverage report in browser"

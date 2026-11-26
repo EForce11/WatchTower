@@ -1,5 +1,7 @@
 run:
   timeout: 5m
+  build-tags:
+    - netns
   # Fail on first error rather than collecting all errors
   issues-exit-code: 1
 
