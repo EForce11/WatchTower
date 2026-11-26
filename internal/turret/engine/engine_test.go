@@ -654,17 +654,177 @@ func TestConcurrentSameCommand(t *testing.T) {
 	}
 }
 
-func TestConcurrentMixed(t *testing.T) {
+func countApplied(e *env, act synapsev1.Action, addrs func(i int) string, n int) int {
+	got := 0
+	for i := range n {
+		if e.eng.Handle(reflex("r", act, addrs(i), 60)).GetResult() == okRes {
+			got++
+		}
+	}
+	return got
+}
+
+func TestReflexBudgetNotBypassedByProtectedFallback(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Protected = testProtectedWith(t, &e.deps.Cfg, "198.51.100.200")
+	e.deps.Limiter = safety.NewReflexLimiter(e.deps.Cfg.ReflexBudget, e.deps.Cfg.PrefixLimiter, e.clk.Now)
+	e.start()
+	got := countApplied(e, synapsev1.Action_ACTION_BAN_TEMP, func(i int) string { return fmt.Sprintf("198.51.100.%d", i+1) }, 150)
+	if got != 50 {
+		t.Fatalf("applied = %d, want exactly the budget (50)", got)
+	}
+	if e.fw.Has(nft.KindBan, pfx("198.51.100.0/24")) {
+		t.Fatal("/24 containing a protected address was banned")
+	}
+}
+
+func TestReflexRateLimitBudgetAndNoEscalation(t *testing.T) {
+	e := newEnv(t)
+	got := countApplied(e, synapsev1.Action_ACTION_RATE_LIMIT, func(i int) string { return fmt.Sprintf("198.51.100.%d", i+1) }, 100)
+	if got != 50 {
+		t.Fatalf("rate limits applied = %d, want 50", got)
+	}
+	// Rate limits never count toward the >10 bans/prefix rule.
+	e = newEnv(t)
+	for i := 1; i <= 12; i++ {
+		e.expect(reflex("r", synapsev1.Action_ACTION_RATE_LIMIT, fmt.Sprintf("198.51.100.%d", i), 60), okRes)
+	}
+	e.expect(reflex("r", synapsev1.Action_ACTION_BAN_TEMP, "198.51.100.13", 60), okRes)
+	if e.fw.Has(nft.KindBan, pfx("198.51.100.0/24")) || !e.fw.Has(nft.KindBan, pfx("198.51.100.13/32")) {
+		t.Fatalf("rate limits caused escalation: %v", e.fw.Calls())
+	}
+}
+
+func TestReflexAdmissionReleasedWhenFirewallFails(t *testing.T) {
+	e := newEnv(t)
+	for i := range 50 {
+		if i == 0 {
+			e.fw.FailNext(errors.New("nft down"))
+			e.expect(reflex("r", synapsev1.Action_ACTION_BAN_TEMP, "203.0.0.9", 60), failedRes)
+			continue
+		}
+		e.expect(reflex("r", synapsev1.Action_ACTION_BAN_TEMP, fmt.Sprintf("203.0.%d.9", i), 60), okRes)
+	}
+	// The failed attempt must not have consumed budget: one slot is left.
+	e.expect(reflex("r", synapsev1.Action_ACTION_BAN_TEMP, "203.0.99.9", 60), okRes)
+	e.expect(reflex("r", synapsev1.Action_ACTION_BAN_TEMP, "203.0.98.9", 60), budgetRef)
+}
+
+func TestStateFilePrunesExpiredRecords(t *testing.T) {
+	e := newEnv(t)
+	e.expect(e.auto("a", synapsev1.Action_ACTION_BAN_TEMP, "203.0.113.1", 60), okRes)
+	e.clk.Advance(100 * time.Second)
+	e.expect(e.auto("b", synapsev1.Action_ACTION_BAN_TEMP, "203.0.113.2", 60), okRes)
+	b, _ := os.ReadFile(filepath.Join(e.state, stateFile))
+	if strings.Contains(string(b), "203.0.113.1/32") || !strings.Contains(string(b), "203.0.113.2/32") {
+		t.Fatalf("state = %s", b)
+	}
+}
+
+func TestTTLClampReported(t *testing.T) {
+	e := newEnv(t)
+	r := e.expect(e.admin("c1", synapsev1.Action_ACTION_BAN_TEMP, "203.0.113.5", 1<<62), okRes)
+	if !strings.Contains(r.GetDetail(), "ttl clamped to 100y") {
+		t.Fatalf("detail = %q", r.GetDetail())
+	}
+	r = e.expect(e.admin("c2", synapsev1.Action_ACTION_BAN_TEMP, "203.0.113.6", 3600), okRes)
+	if strings.Contains(r.GetDetail(), "clamped") {
+		t.Fatalf("unexpected clamp note: %q", r.GetDetail())
+	}
+}
+
+func TestPanicResponseKeepsID(t *testing.T) {
+	e := newEnv(t)
+	e.deps.Kill = func(int, string, uint64) error { panic("boom") }
+	e.start()
+	if r := e.eng.Handle(e.admin("k1", synapsev1.Action_ACTION_KILL_PROCESS, "pid:4242", 0)); r.GetId() != "k1" {
+		t.Fatalf("id = %q", r.GetId())
+	}
+	if r := e.eng.Handle(reflex("rq", synapsev1.Action_ACTION_KILL_TEMP_MALWARE, "", 0)); r.GetId() != "rq" && r.GetResult() == failedRes {
+		t.Fatalf("id = %q", r.GetId())
+	}
+}
+
+func TestKillNotExecutedWhenRecordFails(t *testing.T) {
+	e := newEnv(t)
+	dir := filepath.Dir(e.replayP)
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chmod(dir, 0o700) }()
+	e.expect(e.admin("k1", synapsev1.Action_ACTION_KILL_PROCESS, "pid:4242", 0), failedRes)
+	if len(e.kills) != 0 {
+		t.Fatalf("kill executed without a replay record: %v", e.kills)
+	}
+}
+
+func TestConcurrentMixedFinalState(t *testing.T) {
 	e := newEnv(t)
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	bans := map[string]bool{}
 	for i := range 32 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			e.eng.Handle(reflex("r", synapsev1.Action_ACTION_BAN_TEMP, fmt.Sprintf("203.0.%d.9", i), 60))
-			e.eng.Handle(e.auto(fmt.Sprintf("a%d", i), synapsev1.Action_ACTION_UNBAN, fmt.Sprintf("203.0.%d.9", i), 0))
+			ip := fmt.Sprintf("203.0.%d.9", i)
+			r := e.eng.Handle(reflex("r", synapsev1.Action_ACTION_BAN_TEMP, ip, 60))
+			mu.Lock()
+			bans[ip] = r.GetResult() == okRes
+			mu.Unlock()
 			_ = e.eng.SetProtected(e.deps.Protected)
 		}()
 	}
 	wg.Wait()
+	b, _ := os.ReadFile(filepath.Join(e.state, stateFile))
+	for ip, ok := range bans {
+		if !ok {
+			t.Fatalf("%s not applied", ip)
+		}
+		if !e.fw.Has(nft.KindBan, pfx(ip+"/32")) || !strings.Contains(string(b), ip+"/32") {
+			t.Fatalf("%s missing from firewall or state", ip)
+		}
+	}
+}
+
+func TestPersistFailureRetriedOnNextMutationAndClose(t *testing.T) {
+	e := newEnv(t)
+	away := e.state + ".away"
+	if err := os.Rename(e.state, away); err != nil {
+		t.Fatal(err)
+	}
+	r := e.expect(e.auto("a", synapsev1.Action_ACTION_BAN_TEMP, "203.0.113.1", 600), okRes)
+	if !strings.Contains(r.GetDetail(), "state not persisted") {
+		t.Fatalf("detail = %q", r.GetDetail())
+	}
+	if err := e.eng.Close(); err == nil {
+		t.Fatal("Close must report the pending persist failure")
+	}
+	if err := os.Rename(away, e.state); err != nil {
+		t.Fatal(err)
+	}
+	e.expect(e.auto("b", synapsev1.Action_ACTION_BAN_TEMP, "203.0.113.2", 600), okRes)
+	b, _ := os.ReadFile(filepath.Join(e.state, stateFile))
+	if !strings.Contains(string(b), "203.0.113.1/32") || !strings.Contains(string(b), "203.0.113.2/32") {
+		t.Fatalf("next mutation did not write the full state: %s", b)
+	}
+
+	// Close alone flushes a pending write.
+	if err := os.Rename(e.state, away); err != nil {
+		t.Fatal(err)
+	}
+	e.expect(e.auto("c", synapsev1.Action_ACTION_BAN_TEMP, "203.0.113.3", 600), okRes)
+	if err := os.Rename(away, e.state); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.eng.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(filepath.Join(e.state, stateFile))
+	if !strings.Contains(string(b), "203.0.113.3/32") {
+		t.Fatalf("Close did not flush: %s", b)
+	}
 }
