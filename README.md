@@ -147,6 +147,17 @@ make integration-test-race
 
 # Run the full CI gate locally (proto-check, build, lint, test)
 make verify
+
+# Run the Turret nftables tests in an unprivileged network namespace
+make test-netns
+```
+
+### Turret emergency rollback
+
+`wt-turret` bans through its own nftables table. If a ban ever locks you out, remove the table (no config needed):
+
+```bash
+sudo ./wt-turret panic-flush
 ```
 
 ---

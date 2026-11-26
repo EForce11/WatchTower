@@ -29,6 +29,11 @@ verify: proto-check
 	@test -n "$$WT_TEST_DATABASE_URL" || echo "⚠️  WT_TEST_DATABASE_URL not set: migration tests skipped"
 	go test -race ./internal/... ./pkg/...
 	go test ./test/integration/
+	@if unshare --user --map-root-user --net true 2>/dev/null; then \
+		$(MAKE) test-netns; \
+	else \
+		echo "⚠️  unprivileged user namespaces unavailable: test-netns skipped (CI runs the netns job)"; \
+	fi
 	@echo "Verify complete"
 
 # Build all binaries
@@ -53,7 +58,7 @@ test-rules:
 
 # Run nftables netns tests (unprivileged: user + network namespace)
 test-netns:
-	unshare --user --map-root-user --net go test -tags netns -race ./internal/turret/nft/
+	unshare --user --map-root-user --net go test -tags netns -race ./internal/turret/nft/ ./cmd/wt-turret/
 
 # Run integration test only
 integration-test:

@@ -86,3 +86,16 @@ jobs:
           go-version-file: go.mod
       - name: Migration tests
         run: go test -race ./internal/core/store/
+
+  netns:
+    name: Netns
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Allow unprivileged user namespaces (Ubuntu 24.04 restricts them)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      - name: nftables netns tests
+        run: make test-netns

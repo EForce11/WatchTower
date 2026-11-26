@@ -357,6 +357,8 @@ Canary files (fake `.env`, fake SSH private key, fake cloud credentials) watched
 **Socket:** `/run/watchtower/turret.sock`, `0660 root:watchtower`. Peer UID verified with `SO_PEERCRED`. **No network listeners.**
 **Design goal:** small, boring, heavily tested. Turret parses only two message types: `ReflexRequest` (locally authenticated) and `SignedCommand` (cryptographically authenticated).
 
+> **Phase 1 scope note:** `ISOLATE_HOST` / `RELEASE_HOST` and the WebAuthn signature scheme are deferred to a later phase. Phase 1 Turret verifies Ed25519 signatures only and answers the isolation actions with `FAILED` ("not implemented").
+
 #### 3.4.1 Safety Layer (`internal/turret/safety`) — runs before every action
 
 1. **Self-preservation (hardcoded, unoverridable):** `127.0.0.0/8`, `::1`, link-local, all local interface addresses, default gateway(s), configured DNS resolvers, the Core endpoint, the WireGuard subnet, and the local whitelist file.
@@ -372,6 +374,10 @@ Canary files (fake `.env`, fake SSH private key, fake cloud credentials) watched
 | `KILL_PROCESS` | ✗ | ✗ | ✔ |
 | `ISOLATE_HOST` / `RELEASE_HOST` | ✗ | ✗ | ✔ |
 
+   - **Minimum prefix:** a ban target must be at least a `/16` (IPv4) or a `/32` (IPv6); anything wider is refused.
+   - **Overlap rule:** any target that overlaps a protected range is refused, whether it is wider than, equal to or inside that range.
+   - **`REFLEX` bans are single addresses only.** The one exception is the local prefix limiter (item 4), which widens to the `/24` (`/64`) itself.
+   - **Name-based immunity** (processes, hosts) applies only under fixed system prefixes (`/usr/bin/`, `/usr/sbin/`, `/usr/local/bin/`, `/usr/local/sbin/`, `/bin/`, `/sbin/`, `/opt/watchtower/`), so a process in a writable path cannot claim immunity by its name.
 3. **Reflex budget:** at most 50 distinct IPs banned via `REFLEX` per 10 minutes (configurable). Beyond that, Reflex bans are refused and a `high` detection is raised: either a large attack (Core's fleet logic takes over) or a compromised Sentry trying to use Turret as a DoS tool.
 4. **Local prefix limiter:** > 10 Reflex bans from one `/24` (`/64`) in 60 s → ban the prefix for the Reflex TTL instead of individual IPs. Protection stays active for all other traffic (no `LOG_ONLY` fallback).
 5. **`KILL_TEMP_MALWARE` re-verification:** Turret reads `/proc/<pid>/exe` itself, `filepath.Clean` + `EvalSymlinks`, requires a prefix of `/tmp/`, `/var/tmp/` or `/dev/shm/`, computes SHA-256 itself and requires it to be in the **Core-signed** IOC bundle on disk. Sentry's claimed hash is ignored. `memfd:` or `(deleted)` executables are refused locally and raised as `critical` for human decision.
@@ -405,6 +411,8 @@ table inet watchtower {
 }
 ```
 
+- **Bans never shorten.** Every mutation is recorded as (span, absolute deadline) and the affected set is rewritten from a sweep over all records, so overlapping records keep the later deadline and a narrower or shorter ban cannot cut a longer one.
+- The rate-limit bucket is **aggregate**: the `ratelim` sets throttle all matching traffic against one shared bucket per set, not per source address.
 - Changes are applied as nftables transactions through `google/nftables` (atomic; no shelling out).
 - Priority `-10` runs before the default filter chains (priority 0), including the iptables-nft compatibility tables, so bans apply regardless of existing `ESTABLISHED,RELATED` accepts.
 - `allow4/allow6` are evaluated first, so even a bug that inserts a self-preservation address into a ban set cannot cut management access.
@@ -825,6 +833,29 @@ message WebAuthnAssertion {
 Turret verification order: (1) `key_id` known and allowed for this action (§3.4.1 table); (2) signature over `payload` bytes; (3) parse payload; (4) `agent_id` matches; (5) `now` within `[issued_at − 30 s, expires_at]`; (6) `command_id` not in the seen-ID cache (kept until `expires_at`, persisted across restarts); (7) Safety Layer. Every refusal is reported back to Core and audited.
 
 Because Sentry only forwards `SignedCommand` bytes, a compromised Sentry can drop or delay commands but cannot alter or forge them.
+
+#### 5.2.1 Replay cache
+
+`replay.Cache.Record` is atomic: the duplicate check, the insert and the atomic file write happen under one lock, and `Record` returns only after the cache is persisted. If persisting fails the cache is rolled back and the command is refused, so a restart can never forget an ID that was accepted. Entries are kept until the command's `expires_at`.
+
+#### 5.2.2 Signed IOC bundle (`proto/watchtower/synapse/v1/ioc.proto`)
+
+```protobuf
+message IocBundle {
+  uint64 version   = 1;  // monotonically increasing
+  int64  issued_at = 2;  // unix seconds
+  repeated bytes  sha256 = 3;  // raw 32-byte digests of known-bad files
+  repeated string cidrs  = 4;  // known-bad ranges, CIDR notation
+}
+
+message SignedIocBundle {
+  bytes  payload   = 1;  // serialized IocBundle — the signature covers these exact bytes
+  bytes  signature = 2;
+  string key_id    = 3;  // the Core key that signed it
+}
+```
+
+Turret reads the bundle from disk (`ioc_bundle`, default `/var/lib/watchtower/ioc.bundle`) on every `KILL_TEMP_MALWARE` and verifies it against the automation key before trusting any hash.
 
 ### 5.3 Human-in-the-Loop Flow
 
