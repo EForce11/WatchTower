@@ -49,6 +49,13 @@ func (k *Keyring) VerifyDetached(payload, sig []byte, keyID string) (KeyClass, e
 	return e.class, nil
 }
 
+// schemeError is the refusal detail for a signature scheme this build does
+// not verify; it matches ErrUnsupportedScheme.
+type schemeError struct{}
+
+func (schemeError) Error() string        { return "scheme not supported until Phase 5" }
+func (schemeError) Is(target error) bool { return target == ErrUnsupportedScheme }
+
 // Verify checks scheme, key, signature, agent, validity window and lifetime
 // in that order.
 func (k *Keyring) Verify(sc *synapsev1.SignedCommand, agentID string, now time.Time) (Verified, error) {
@@ -56,7 +63,7 @@ func (k *Keyring) Verify(sc *synapsev1.SignedCommand, agentID string, now time.T
 		return Verified{}, fmt.Errorf("nil signed command: %w", ErrBadSignature)
 	}
 	if sc.GetScheme() != synapsev1.SignatureScheme_SIGNATURE_SCHEME_ED25519 {
-		return Verified{}, ErrUnsupportedScheme
+		return Verified{}, schemeError{}
 	}
 	class, err := k.VerifyDetached(sc.GetPayload(), sc.GetSignature(), sc.GetKeyId())
 	if err != nil {

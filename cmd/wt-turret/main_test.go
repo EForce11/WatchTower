@@ -255,3 +255,63 @@ func TestRefreshProtectedRetriesFailedApply(t *testing.T) {
 		t.Fatalf("last applied = %v, want %v", set.last, next.Prefixes())
 	}
 }
+
+func TestPanicFlushClearStateMovesBans(t *testing.T) {
+	stubFlush(t, func() error { return nil })
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "bans.json"), []byte(`[]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runCmd(t, "panic-flush", "--clear-state", "--state-dir", dir)
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bans.json")); !os.IsNotExist(err) {
+		t.Fatalf("bans.json still present: %v", err)
+	}
+	m, _ := filepath.Glob(filepath.Join(dir, "bans.json.flushed-*"))
+	if len(m) != 1 || !strings.Contains(stdout, m[0]) {
+		t.Fatalf("flushed files=%v stdout=%q", m, stdout)
+	}
+}
+
+func TestPanicFlushClearStateMissingFileIsFine(t *testing.T) {
+	stubFlush(t, func() error { return nil })
+	code, _, stderr := runCmd(t, "panic-flush", "--clear-state", "--state-dir", t.TempDir())
+	if code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+}
+
+func TestPanicFlushWithoutClearStateKeepsBans(t *testing.T) {
+	stubFlush(t, func() error { return nil })
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bans.json")
+	_ = os.WriteFile(p, []byte(`[]`), 0o600)
+	if code, _, stderr := runCmd(t, "panic-flush", "--state-dir", dir); code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatal("bans.json must stay without --clear-state")
+	}
+}
+
+func TestPanicFlushFailureLeavesState(t *testing.T) {
+	stubFlush(t, func() error { return errors.New("netlink boom") })
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bans.json")
+	_ = os.WriteFile(p, []byte(`[]`), 0o600)
+	if code, _, _ := runCmd(t, "panic-flush", "--clear-state", "--state-dir", dir); code != 1 {
+		t.Fatalf("code=%d", code)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatal("state must not be cleared when the flush failed")
+	}
+}
+
+func TestPanicFlushBadFlag(t *testing.T) {
+	stubFlush(t, func() error { t.Fatal("must not flush"); return nil })
+	if code, _, _ := runCmd(t, "panic-flush", "--nope"); code != 2 {
+		t.Fatalf("code=%d", code)
+	}
+}
