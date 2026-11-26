@@ -1,12 +1,13 @@
 package nft
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net/netip"
+	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -70,7 +71,9 @@ func setName(base string, v6 bool) string {
 }
 
 type nftFW struct {
-	mu sync.Mutex // serializes read-modify-write sequences
+	mu   sync.Mutex // serializes read-modify-write sequences
+	now  func() time.Time
+	recs map[string]*recordSet // set name -> requested entries; nil until loaded
 }
 
 // NewNFT returns the nftables-backed Firewall. It verifies that the kernel
@@ -83,7 +86,7 @@ func NewNFT() (Firewall, error) {
 	if _, err := c.ListTablesOfFamily(nftables.TableFamilyINet); err != nil {
 		return nil, fmt.Errorf("nft: nftables unavailable: %w", err)
 	}
-	return &nftFW{}, nil
+	return &nftFW{now: time.Now}, nil
 }
 
 func ourTable() *nftables.Table {
@@ -123,12 +126,20 @@ func (f *nftFW) Ensure() error {
 			return err
 		}
 		if ok {
-			return nil
+			return f.load(c, t) // keep contents, remember them for later rewrites
 		}
 		c.DelTable(t) // same transaction as the re-create below
 	}
 	buildLayout(c)
-	return c.Flush()
+	if err := c.Flush(); err != nil {
+		f.recs = nil
+		return err
+	}
+	f.recs = map[string]*recordSet{}
+	for _, sp := range setSpecs {
+		f.recs[sp.name] = &recordSet{}
+	}
+	return nil
 }
 
 func buildLayout(c *nftables.Conn) {
@@ -172,6 +183,8 @@ func ruleExprs(r ruleSpec, set *nftables.Set) []expr.Any {
 		&expr.Lookup{SourceRegister: 1, SetName: set.Name, SetID: set.ID},
 	}
 	if r.limit {
+		// NOTE: one shared token bucket for ALL addresses in the ratelim set
+		// (aggregate, not per-source), exactly as spec 3.4.2 (R10).
 		e = append(e, &expr.Limit{Type: expr.LimitTypePkts, Rate: 2, Unit: expr.LimitTimeSecond, Burst: 4, Over: true})
 	}
 	return append(e, &expr.Verdict{Kind: r.verdict})
@@ -244,21 +257,25 @@ func ourChain(c *nftables.Conn) (*nftables.Chain, error) {
 	return ch, nil
 }
 
+// ruleMatches compares the kernel's expression list with the one we would
+// install (set IDs are per-transaction and ignored), so any tampering such as
+// a daddr match or a changed limit triggers a recreate.
 func ruleMatches(r *nftables.Rule, w ruleSpec) bool {
-	var set string
-	verdict, limit := expr.VerdictKind(-99), false
-	for _, e := range r.Exprs {
-		switch x := e.(type) {
-		case *expr.Lookup:
-			set = x.SetName
-		case *expr.Verdict:
-			verdict = x.Kind
-		case *expr.Limit:
-			limit = x.Type == expr.LimitTypePkts && x.Rate == 2 && x.Unit == expr.LimitTimeSecond &&
-				x.Burst == 4 && x.Over
+	want := ruleExprs(w, &nftables.Set{Name: w.set})
+	return reflect.DeepEqual(stripIDs(r.Exprs), stripIDs(want))
+}
+
+func stripIDs(in []expr.Any) []expr.Any {
+	out := make([]expr.Any, len(in))
+	for i, e := range in {
+		if l, ok := e.(*expr.Lookup); ok {
+			cp := *l
+			cp.SetID = 0
+			e = &cp
 		}
+		out[i] = e
 	}
-	return set == w.set && verdict == w.verdict && limit == w.limit
+	return out
 }
 
 // ---- Flush ---------------------------------------------------------------
@@ -275,92 +292,31 @@ func (f *nftFW) Flush() error {
 		return err
 	}
 	c.DelTable(t)
+	f.recs = nil
 	if err := c.Flush(); err != nil && !errors.Is(err, unix.ENOENT) {
 		return err
 	}
 	return nil
 }
 
-// ---- address ranges ------------------------------------------------------
+// ---- records and rewrites -------------------------------------------------
+//
+// The kernel rejects overlapping interval elements, and an overlapping
+// narrower entry would otherwise shorten or drop a longer ban. So every
+// mutation updates an in-process record of what was requested (exact span ->
+// absolute deadline) and then rewrites the whole affected set in one
+// transaction from a sweep over all records (see recordSet.segments).
 
-// span is a half-open address range [lo, hi). open means hi is beyond the
-// end of the address space (no end element exists).
-type span struct {
-	lo, hi  netip.Addr
-	open    bool
-	expires time.Duration
-}
-
-func prefixSpan(p netip.Prefix) span {
-	b := p.Addr().AsSlice()
-	for i := p.Bits(); i < len(b)*8; i++ {
-		b[i/8] |= 0x80 >> (i % 8)
+func baseName(k Kind) string {
+	switch k {
+	case KindPerm:
+		return "perm"
+	case KindRateLimit:
+		return "ratelim"
+	default:
+		return "ban"
 	}
-	last, _ := netip.AddrFromSlice(b)
-	hi := last.Next()
-	return span{lo: p.Addr(), hi: hi, open: !hi.IsValid()}
 }
-
-func (s span) contains(o span) bool {
-	if o.lo.Compare(s.lo) < 0 {
-		return false
-	}
-	if s.open {
-		return true
-	}
-	return !o.open && o.hi.Compare(s.hi) <= 0
-}
-
-func (s span) equal(o span) bool {
-	return s.lo == o.lo && s.open == o.open && (s.open || s.hi == o.hi)
-}
-
-func (s span) elems(ttl time.Duration) []nftables.SetElement {
-	el := []nftables.SetElement{{Key: s.lo.AsSlice(), Timeout: ttl}}
-	if !s.open {
-		el = append(el, nftables.SetElement{Key: s.hi.AsSlice(), IntervalEnd: true})
-	}
-	return el
-}
-
-// parseSpans pairs interval start/end elements into ranges.
-func parseSpans(elems []nftables.SetElement) []span {
-	es := slices.Clone(elems)
-	sort.SliceStable(es, func(i, j int) bool {
-		if c := bytes.Compare(es[i].Key, es[j].Key); c != 0 {
-			return c < 0
-		}
-		return es[i].IntervalEnd && !es[j].IntervalEnd // an end closes the previous range first
-	})
-	var out []span
-	var cur *span
-	for i := range es {
-		e := &es[i]
-		a, ok := netip.AddrFromSlice(e.Key)
-		if !ok {
-			continue
-		}
-		switch {
-		case !e.IntervalEnd:
-			if cur != nil {
-				cur.open = true
-				out = append(out, *cur)
-			}
-			cur = &span{lo: a, expires: e.Expires}
-		case cur != nil:
-			cur.hi = a
-			out = append(out, *cur)
-			cur = nil
-		}
-	}
-	if cur != nil {
-		cur.open = true
-		out = append(out, *cur)
-	}
-	return out
-}
-
-// ---- Add / Remove / SetAllow ---------------------------------------------
 
 func (f *nftFW) set(c *nftables.Conn, t *nftables.Table, name string) (*nftables.Set, error) {
 	s, err := c.GetSetByName(t, name)
@@ -370,13 +326,105 @@ func (f *nftFW) set(c *nftables.Conn, t *nftables.Table, name string) (*nftables
 	return s, nil
 }
 
+// load imports the kernel's current ban/perm/ratelim elements as records.
+func (f *nftFW) load(c *nftables.Conn, t *nftables.Table) error {
+	recs := map[string]*recordSet{}
+	now := f.now()
+	for _, sp := range setSpecs {
+		if strings.HasPrefix(sp.name, "allow") {
+			continue
+		}
+		s, err := f.set(c, t, sp.name)
+		if err != nil {
+			return err
+		}
+		el, err := c.GetSetElements(s)
+		if err != nil {
+			return err
+		}
+		rs := &recordSet{}
+		deadline := func(e time.Duration) time.Time {
+			if !sp.timeout {
+				return time.Time{}
+			}
+			return now.Add(e)
+		}
+		if s.Interval {
+			spans, err := parseSpans(el)
+			if err != nil {
+				return fmt.Errorf("nft: import %s: %w", sp.name, err)
+			}
+			for _, e := range spans {
+				*rs = append(*rs, record{span: e.span, deadline: deadline(e.expires)})
+			}
+		} else {
+			for i := range el {
+				a, ok := netip.AddrFromSlice(el[i].Key)
+				if !ok {
+					return fmt.Errorf("nft: import %s: malformed key", sp.name)
+				}
+				*rs = append(*rs, record{span: prefixSpan(netip.PrefixFrom(a, a.BitLen())), deadline: deadline(el[i].Expires)})
+			}
+		}
+		recs[sp.name] = rs
+	}
+	f.recs = recs
+	return nil
+}
+
+// ensureLoaded imports records on first use (table must exist).
+func (f *nftFW) ensureLoaded(c *nftables.Conn) (*nftables.Table, error) {
+	t, err := findTable(c)
+	if err != nil {
+		return nil, err
+	}
+	if t == nil {
+		return nil, errors.New("nft: table watchtower missing (was Ensure called?)")
+	}
+	if f.recs == nil {
+		if err := f.load(c, t); err != nil {
+			return nil, err
+		}
+	}
+	return t, nil
+}
+
+// rewrite replaces the contents of one set with the sweep of its records in a
+// single transaction. Expired records are dropped first.
+func (f *nftFW) rewrite(c *nftables.Conn, t *nftables.Table, name string) error {
+	s, err := f.set(c, t, name)
+	if err != nil {
+		return err
+	}
+	now := f.now()
+	rs := f.recs[name]
+	rs.prune(now)
+	var el []nftables.SetElement
+	if s.Interval {
+		for _, seg := range rs.segments(now) {
+			el = append(el, seg.elems(timeoutFor(seg.deadline, now))...)
+		}
+	} else {
+		for i := range *rs {
+			r := &(*rs)[i]
+			el = append(el, nftables.SetElement{Key: r.lo.AsSlice(), Timeout: timeoutFor(r.deadline, now)})
+		}
+	}
+	c.FlushSet(s)
+	if len(el) > 0 {
+		if err := c.SetAddElements(s, el); err != nil {
+			return err
+		}
+	}
+	return c.Flush()
+}
+
+// Add never shortens: the address stays blocked until the latest deadline of
+// any entry covering it, and re-adding keeps the later of old and new.
 func (f *nftFW) Add(k Kind, p netip.Prefix, ttl time.Duration) error {
 	np, err := validateAdd(k, p, ttl)
 	if err != nil {
 		return err
-	}
-	if k == KindPerm {
-		ttl = 0
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -384,63 +432,27 @@ func (f *nftFW) Add(k Kind, p netip.Prefix, ttl time.Duration) error {
 	if err != nil {
 		return err
 	}
-	t := ourTable()
-	v6 := np.Addr().Is6()
-	base := map[Kind]string{KindBan: "ban", KindPerm: "perm", KindRateLimit: "ratelim"}[k]
-	s, err := f.set(c, t, setName(base, v6))
+	t, err := f.ensureLoaded(c)
 	if err != nil {
 		return err
 	}
-	existing, err := c.GetSetElements(s)
-	if err != nil {
+	name := setName(baseName(k), np.Addr().Is6())
+	var deadline time.Time
+	if k != KindPerm {
+		deadline = f.now().Add(ttl)
+	}
+	rs := f.recs[name]
+	old := slices.Clone(*rs)
+	rs.add(prefixSpan(np), deadline)
+	if err := f.rewrite(c, t, name); err != nil {
+		*rs = old
 		return err
 	}
-	if !s.Interval {
-		return addPlain(c, s, existing, np, ttl)
-	}
-	return addInterval(c, s, existing, prefixSpan(np), ttl)
+	return nil
 }
 
-func addPlain(c *nftables.Conn, s *nftables.Set, existing []nftables.SetElement, p netip.Prefix, ttl time.Duration) error {
-	key := p.Addr().AsSlice()
-	for i := range existing {
-		if bytes.Equal(existing[i].Key, key) {
-			if err := c.SetDeleteElements(s, []nftables.SetElement{{Key: key}}); err != nil {
-				return err
-			}
-			break
-		}
-	}
-	if err := c.SetAddElements(s, []nftables.SetElement{{Key: key, Timeout: ttl}}); err != nil {
-		return err
-	}
-	return c.Flush()
-}
-
-// addInterval inserts a range into an interval set. The kernel rejects
-// overlapping ranges, so narrower existing entries are replaced by the new
-// wider one, and a range already covered by a wider entry is left to it.
-func addInterval(c *nftables.Conn, s *nftables.Set, existing []nftables.SetElement, n span, ttl time.Duration) error {
-	for _, o := range parseSpans(existing) {
-		switch {
-		case o.equal(n):
-			if err := c.SetDeleteElements(s, o.elems(0)); err != nil {
-				return err
-			}
-		case o.contains(n):
-			return nil // already blocked by a wider entry
-		case n.contains(o):
-			if err := c.SetDeleteElements(s, o.elems(0)); err != nil {
-				return err
-			}
-		}
-	}
-	if err := c.SetAddElements(s, n.elems(ttl)); err != nil {
-		return err
-	}
-	return c.Flush()
-}
-
+// Remove deletes exactly the record p. Addresses still covered by other
+// (wider or narrower-overlapping) records stay blocked.
 func (f *nftFW) Remove(p netip.Prefix) error {
 	np, err := normalize(p)
 	if err != nil {
@@ -456,51 +468,28 @@ func (f *nftFW) Remove(p netip.Prefix) error {
 	if err != nil || t == nil {
 		return err
 	}
+	if f.recs == nil {
+		if err := f.load(c, t); err != nil {
+			return err
+		}
+	}
 	single := np.Bits() == np.Addr().BitLen()
-	changed := false
 	for _, base := range []string{"ban", "perm", "ratelim"} {
 		if base == "ratelim" && !single {
 			continue
 		}
-		s, err := f.set(c, t, setName(base, np.Addr().Is6()))
-		if err != nil {
+		name := setName(base, np.Addr().Is6())
+		rs := f.recs[name]
+		old := slices.Clone(*rs)
+		if !rs.remove(prefixSpan(np)) {
+			continue
+		}
+		if err := f.rewrite(c, t, name); err != nil {
+			*rs = old
 			return err
 		}
-		n, err := removeFromSet(c, s, np)
-		if err != nil {
-			return err
-		}
-		changed = changed || n > 0
 	}
-	if !changed {
-		return nil
-	}
-	return c.Flush()
-}
-
-// removeFromSet queues deletion of exactly p from s and returns how many
-// entries it queued.
-func removeFromSet(c *nftables.Conn, s *nftables.Set, p netip.Prefix) (int, error) {
-	existing, err := c.GetSetElements(s)
-	if err != nil {
-		return 0, err
-	}
-	if !s.Interval {
-		key := p.Addr().AsSlice()
-		for i := range existing {
-			if bytes.Equal(existing[i].Key, key) {
-				return 1, c.SetDeleteElements(s, []nftables.SetElement{{Key: key}})
-			}
-		}
-		return 0, nil
-	}
-	n := prefixSpan(p)
-	for _, o := range parseSpans(existing) {
-		if o.equal(n) {
-			return 1, c.SetDeleteElements(s, o.elems(0))
-		}
-	}
-	return 0, nil
+	return nil
 }
 
 // mergePrefixes drops duplicates and prefixes covered by a wider one, so the

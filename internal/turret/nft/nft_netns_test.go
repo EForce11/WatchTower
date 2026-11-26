@@ -105,8 +105,10 @@ type peer struct {
 // A=10.99.0.1/24, B=10.99.0.2/24.
 func newPeer(t *testing.T) *peer {
 	t.Helper()
+	// The thread stays locked until we are back in the origin netns; if
+	// restoring fails the test goroutine exits locked and the runtime
+	// discards the thread instead of reusing it in the wrong namespace.
 	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
 	origin, err := netns.Get()
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +119,9 @@ func newPeer(t *testing.T) *peer {
 		t.Fatalf("netns.New: %v", err)
 	}
 	if err := netns.Set(origin); err != nil {
-		t.Fatal(err)
+		t.Fatal(err) // deliberately still locked
 	}
+	runtime.UnlockOSThread()
 	t.Cleanup(func() { bns.Close() })
 
 	la := netlink.NewLinkAttrs()
@@ -148,6 +151,12 @@ func newPeer(t *testing.T) *peer {
 	if err := netlink.LinkSetUp(al); err != nil {
 		t.Fatal(err)
 	}
+	configurePeerSide(t, bns)
+	return &peer{ns: bns}
+}
+
+func configurePeerSide(t *testing.T, bns netns.NsHandle) {
+	t.Helper()
 	h, err := netlink.NewHandleAt(bns)
 	if err != nil {
 		t.Fatal(err)
@@ -157,18 +166,22 @@ func newPeer(t *testing.T) *peer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.AddrAdd(bl, &netlink.Addr{IPNet: &net.IPNet{IP: net.ParseIP("10.99.0.2"), Mask: net.CIDRMask(24, 32)}}); err != nil {
-		t.Fatal(err)
+	for _, ip := range []string{"10.99.0.2", "10.99.0.3"} {
+		if err := h.AddrAdd(bl, &netlink.Addr{IPNet: &net.IPNet{IP: net.ParseIP(ip), Mask: net.CIDRMask(24, 32)}}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := h.LinkSetUp(bl); err != nil {
 		t.Fatal(err)
 	}
-	return &peer{ns: bns}
 }
 
 // dial connects from B to addr. The goroutine is locked to B's netns and
 // exits still locked, so the runtime discards the thread.
-func (p *peer) dial(addr string) error {
+func (p *peer) dial(addr string) error { return p.dialFrom("", addr) }
+
+// dialFrom is dial with an explicit source address ("" = default).
+func (p *peer) dialFrom(local, addr string) error {
 	ch := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
@@ -176,7 +189,11 @@ func (p *peer) dial(addr string) error {
 			ch <- err
 			return
 		}
-		c, err := net.DialTimeout("tcp", addr, dialTimeout)
+		d := net.Dialer{Timeout: dialTimeout}
+		if local != "" {
+			d.LocalAddr = &net.TCPAddr{IP: net.ParseIP(local)}
+		}
+		c, err := d.Dial("tcp", addr)
 		if err == nil {
 			_ = c.Close()
 		}
@@ -213,7 +230,19 @@ func mustReach(t *testing.T, p *peer, addr string) {
 
 func mustBeBlocked(t *testing.T, p *peer, addr string) {
 	t.Helper()
-	err := p.dial(addr)
+	mustBeBlockedFrom(t, p, "", addr)
+}
+
+func mustReachFrom(t *testing.T, p *peer, local, addr string) {
+	t.Helper()
+	if err := p.dialFrom(local, addr); err != nil {
+		t.Fatalf("expected connect from %s to succeed: %v", local, err)
+	}
+}
+
+func mustBeBlockedFrom(t *testing.T, p *peer, local, addr string) {
+	t.Helper()
+	err := p.dialFrom(local, addr)
 	if err == nil {
 		t.Fatal("expected connect to be blocked")
 	}
@@ -417,6 +446,71 @@ func TestEnsureRecreatesOnMismatch(t *testing.T) {
 	})
 }
 
+func TestEnsureRecreatesOnTamperedRule(t *testing.T) {
+	fw := newFW(t)
+	if err := fw.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	c := newConn(t)
+	tab := inetTable(TableName)
+	ch, err := c.ListChain(tab, "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := c.GetRules(tab, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := rules[len(rules)-1]
+	for _, e := range last.Exprs {
+		if pl, ok := e.(*expr.Payload); ok {
+			pl.Offset = 24 // ip6 daddr instead of saddr
+		}
+	}
+	if err := c.DelRule(last); err != nil {
+		t.Fatal(err)
+	}
+	c.AddRule(&nftables.Rule{Table: tab, Chain: ch, Exprs: last.Exprs})
+	if err := c.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	// Sanity: the tampered table has the same rule/set/verdict shape.
+	if rs, _ := newConn(t).GetRules(tab, ch); len(rs) != len(wantRules) {
+		t.Fatalf("setup: %d rules", len(rs))
+	}
+	if err := fw.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	assertLayout(t)
+	assertRuleOffsets(t)
+}
+
+// assertRuleOffsets checks that the saddr payload offsets are the spec ones.
+func assertRuleOffsets(t *testing.T) {
+	t.Helper()
+	c := newConn(t)
+	tab := inetTable(TableName)
+	ch, err := c.ListChain(tab, "input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules, err := c.GetRules(tab, ch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, r := range rules {
+		want := uint32(12)
+		if i%2 == 1 {
+			want = 8
+		}
+		for _, e := range r.Exprs {
+			if pl, ok := e.(*expr.Payload); ok && pl.Offset != want {
+				t.Errorf("rule %d payload offset %d, want %d", i, pl.Offset, want)
+			}
+		}
+	}
+}
+
 // ---- behavior -----------------------------------------------------------
 
 func TestBanBlocksTrafficAndAllowWins(t *testing.T) {
@@ -526,31 +620,126 @@ func TestCIDRBan(t *testing.T) {
 	mustReach(t, p, addr)
 }
 
-func TestNestedPrefixesDoNotError(t *testing.T) {
+// Peer B owns 10.99.0.2 (default source) and 10.99.0.3.
+const (
+	bHost  = "10.99.0.2"
+	bOther = "10.99.0.3"
+)
+
+func neverShortenSetup(t *testing.T) (*peer, string, Firewall) {
+	t.Helper()
 	p := newPeer(t)
 	addr := listenA(t)
-	fw := newFW(t)
-	if err := fw.Ensure(); err != nil {
+	return p, addr, ensured(t)
+}
+
+func TestNarrowerLongerInsideWiderShorter(t *testing.T) {
+	p, addr, fw := neverShortenSetup(t)
+	if err := fw.Add(KindBan, netip.MustParsePrefix("10.99.0.0/24"), 2*time.Second); err != nil {
 		t.Fatal(err)
 	}
+	if err := fw.Add(KindBan, netip.MustParsePrefix("10.99.0.2/32"), 8*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	mustBeBlockedFrom(t, p, bOther, addr)
+	time.Sleep(3 * time.Second) // /24 (2 s) is over, /32 (8 s) is not
+	mustBeBlockedFrom(t, p, bHost, addr)
+	mustReachFrom(t, p, bOther, addr)
+}
+
+func TestWiderShorterOverNarrowerLonger(t *testing.T) {
+	p, addr, fw := neverShortenSetup(t)
+	if err := fw.Add(KindBan, netip.MustParsePrefix("10.99.0.2/32"), 8*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Add(KindBan, netip.MustParsePrefix("10.99.0.0/24"), 2*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	mustBeBlockedFrom(t, p, bOther, addr)
+	time.Sleep(3 * time.Second)
+	mustBeBlockedFrom(t, p, bHost, addr)
+	mustReachFrom(t, p, bOther, addr)
+}
+
+func TestRemoveWiderKeepsNarrower(t *testing.T) {
+	p, addr, fw := neverShortenSetup(t)
+	wide := netip.MustParsePrefix("10.99.0.0/24")
+	if err := fw.Add(KindBan, netip.MustParsePrefix("10.99.0.2/32"), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Add(KindBan, wide, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Remove(wide); err != nil {
+		t.Fatal(err)
+	}
+	mustBeBlockedFrom(t, p, bHost, addr)
+	mustReachFrom(t, p, bOther, addr)
+}
+
+func TestRemoveNarrowerInsideWiderKeepsBlocking(t *testing.T) {
+	p, addr, fw := neverShortenSetup(t)
 	host := netip.MustParsePrefix("10.99.0.2/32")
-	cidr := netip.MustParsePrefix("10.99.0.0/24")
+	if err := fw.Add(KindBan, netip.MustParsePrefix("10.99.0.0/24"), time.Minute); err != nil {
+		t.Fatal(err)
+	}
 	if err := fw.Add(KindBan, host, time.Minute); err != nil {
 		t.Fatal(err)
 	}
-	// Wider prefix subsumes the host entry (limiter escalation).
-	if err := fw.Add(KindBan, cidr, time.Minute); err != nil {
-		t.Fatalf("wider prefix over existing host: %v", err)
-	}
-	mustBeBlocked(t, p, addr)
-	// Narrower prefix inside an existing wider one is already covered.
-	if err := fw.Add(KindBan, netip.MustParsePrefix("10.99.0.77/32"), time.Minute); err != nil {
-		t.Fatalf("host inside existing cidr: %v", err)
-	}
-	if err := fw.Remove(cidr); err != nil {
+	if err := fw.Remove(host); err != nil {
 		t.Fatal(err)
 	}
-	mustReach(t, p, addr)
+	mustBeBlockedFrom(t, p, bHost, addr)
+}
+
+func TestEnsureImportsExistingContent(t *testing.T) {
+	fw1 := ensured(t)
+	x := netip.MustParsePrefix("203.0.113.1/32")
+	y := netip.MustParsePrefix("203.0.113.2/32")
+	if err := fw1.Add(KindBan, x, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw1.Add(KindPerm, netip.MustParsePrefix("198.18.0.0/15"), 0); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh instance (daemon restart) must adopt the kernel contents and
+	// not lose them on its first rewrite.
+	fw2, err := NewNFT()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fw2.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw2.Add(KindBan, y, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw2.Add(KindPerm, netip.MustParsePrefix("192.0.2.0/24"), 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ set, addr string }{
+		{"ban4", "203.0.113.1"}, {"ban4", "203.0.113.2"}, {"perm4", "198.18.0.0"}, {"perm4", "192.0.2.0"},
+	} {
+		if !hasStart(t, c.set, netip.MustParseAddr(c.addr)) {
+			t.Errorf("%s lost %s", c.set, c.addr)
+		}
+	}
+	if e := expiresOf(t, "ban4", x.Addr()); e < 50*time.Minute {
+		t.Fatalf("imported ban lost its timeout: %v", e)
+	}
+}
+
+// expiresOf returns the remaining lifetime of the element starting at a.
+func expiresOf(t *testing.T, set string, a netip.Addr) time.Duration {
+	t.Helper()
+	el := setElems(t, set)
+	for i := range el {
+		if !el[i].IntervalEnd && bytes.Equal(el[i].Key, a.AsSlice()) {
+			return el[i].Expires
+		}
+	}
+	t.Fatalf("no element %s in %s", a, set)
+	return 0
 }
 
 func ensured(t *testing.T) Firewall {
@@ -562,26 +751,33 @@ func ensured(t *testing.T) Firewall {
 	return fw
 }
 
-func TestAddRefreshesExisting(t *testing.T) {
+func TestAddNeverShortensTimeout(t *testing.T) {
 	fw := ensured(t)
 	one := netip.MustParsePrefix("192.0.2.1/32")
 	if err := fw.Add(KindBan, one, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if err := fw.Add(KindBan, one, time.Hour); err != nil {
-		t.Fatalf("re-add: %v", err)
+		t.Fatalf("extend: %v", err)
 	}
-	el := setElems(t, "ban4")
-	for i := range el {
-		if !el[i].IntervalEnd && bytes.Equal(el[i].Key, one.Addr().AsSlice()) && el[i].Expires < 30*time.Minute {
-			t.Fatalf("timeout not refreshed: expires=%v", el[i].Expires)
-		}
+	if e := expiresOf(t, "ban4", one.Addr()); e < 59*time.Minute {
+		t.Fatalf("timeout not extended: %v", e)
+	}
+	if err := fw.Add(KindBan, one, 5*time.Second); err != nil {
+		t.Fatalf("shorter re-add: %v", err)
+	}
+	if e := expiresOf(t, "ban4", one.Addr()); e < 59*time.Minute {
+		t.Fatalf("shorter re-add shortened the ban: %v", e)
 	}
 	rl := netip.MustParsePrefix("192.0.2.9/32")
-	for i := 0; i < 2; i++ {
-		if err := fw.Add(KindRateLimit, rl, time.Minute); err != nil {
-			t.Fatalf("ratelim add #%d: %v", i, err)
-		}
+	if err := fw.Add(KindRateLimit, rl, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Add(KindRateLimit, rl, time.Second); err != nil {
+		t.Fatalf("ratelim re-add: %v", err)
+	}
+	if e := expiresOf(t, "ratelim4", rl.Addr()); e < 59*time.Minute {
+		t.Fatalf("ratelim shortened: %v", e)
 	}
 }
 
