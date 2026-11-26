@@ -52,8 +52,10 @@ type spanElem struct {
 }
 
 // parseSpans pairs interval start/end elements into ranges. An end element
-// without a start is an error: the set is not something this package wrote.
-func parseSpans(elems []nftables.SetElement) ([]spanElem, error) {
+// without a start is an error (the set is not something this package wrote)
+// unless orphanEnds is set: in a timeout set the kernel expires a start
+// element but leaves its end element behind, so such leftovers are skipped.
+func parseSpans(elems []nftables.SetElement, orphanEnds bool) ([]spanElem, error) {
 	es := slices.Clone(elems)
 	sort.SliceStable(es, func(i, j int) bool {
 		if c := bytes.Compare(es[i].Key, es[j].Key); c != 0 {
@@ -80,6 +82,8 @@ func parseSpans(elems []nftables.SetElement) ([]spanElem, error) {
 			cur.hi = a
 			out = append(out, *cur)
 			cur = nil
+		case orphanEnds:
+			// leftover of a kernel-expired interval
 		default:
 			return nil, errors.New("nft: interval end element without a start")
 		}
