@@ -258,3 +258,29 @@ func TestReleaseUndoesLastAdmission(t *testing.T) {
 		t.Fatalf("absorbed singles not restored: %d", len(l2.admitted))
 	}
 }
+
+func TestCoveredPrefixRechecksMayWiden(t *testing.T) {
+	l, _ := newLimiter()
+	for i := 1; i <= 11; i++ {
+		l.Admit(netip.MustParseAddr(fmt.Sprintf("198.51.100.%d", i)), yes)
+	}
+	// Covered and still widenable: the prefix, no extra budget.
+	if p, ok := l.Admit(netip.MustParseAddr("198.51.100.200"), yes); !ok || p.Bits() != 24 {
+		t.Fatalf("got %v %v", p, ok)
+	}
+	// The prefix became protected: fall back to the single, budgeted.
+	no := func(netip.Prefix) bool { return false }
+	if p, ok := l.Admit(netip.MustParseAddr("198.51.100.201"), no); !ok || p.Bits() != 32 {
+		t.Fatalf("got %v %v", p, ok)
+	}
+	l.Release(netip.MustParsePrefix("198.51.100.201/32"))
+	// With the budget exhausted the fallback single is refused.
+	for i := range 49 {
+		if _, ok := l.Admit(spread(i), yes); !ok {
+			t.Fatalf("ip %d refused", i)
+		}
+	}
+	if _, ok := l.Admit(netip.MustParseAddr("198.51.100.202"), no); ok {
+		t.Fatal("fallback single must be budgeted")
+	}
+}

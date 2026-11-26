@@ -216,3 +216,28 @@ func TestRecordSetSegments(t *testing.T) {
 		t.Fatalf("segments=%+v", s)
 	}
 }
+
+func TestFakeReplaceAndImport(t *testing.T) {
+	c := newClock()
+	f := NewFakeAt(c.now)
+	_ = f.Add(KindPerm, mp("10.0.0.1/32"), 0)
+	_ = f.Add(KindPerm, mp("10.0.0.2/32"), 0)
+	g := NewFakeFrom(f)
+	if g.Has(KindPerm, mp("10.0.0.1/32")) || !g.Blocked(KindPerm, netip.MustParseAddr("10.0.0.1")) {
+		t.Fatal("import must merge adjacent perms into one interval")
+	}
+	if err := g.Replace([]Entry{
+		{Kind: KindPerm, Prefix: mp("10.0.0.2/32")},
+		{Kind: KindBan, Prefix: mp("10.0.0.9/32"), Deadline: c.now().Add(time.Minute)},
+		{Kind: KindBan, Prefix: mp("10.0.0.8/32"), Deadline: c.now().Add(-time.Minute)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if g.Blocked(KindPerm, netip.MustParseAddr("10.0.0.1")) || !g.Has(KindPerm, mp("10.0.0.2/32")) ||
+		!g.Has(KindBan, mp("10.0.0.9/32")) || g.Has(KindBan, mp("10.0.0.8/32")) {
+		t.Fatal("Replace must set exactly the given live entries")
+	}
+	if err := g.Replace([]Entry{{Kind: KindRateLimit, Prefix: mp("10.0.0.0/24"), Deadline: c.now().Add(time.Minute)}}); err == nil {
+		t.Fatal("invalid entry must be rejected")
+	}
+}

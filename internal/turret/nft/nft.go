@@ -392,6 +392,14 @@ func (f *nftFW) ensureLoaded(c *nftables.Conn) (*nftables.Table, error) {
 // rewrite replaces the contents of one set with the sweep of its records in a
 // single transaction. Expired records are dropped first.
 func (f *nftFW) rewrite(c *nftables.Conn, t *nftables.Table, name string) error {
+	if err := f.queueRewrite(c, t, name); err != nil {
+		return err
+	}
+	return c.Flush()
+}
+
+// queueRewrite queues the set rewrite on c without committing it.
+func (f *nftFW) queueRewrite(c *nftables.Conn, t *nftables.Table, name string) error {
 	s, err := f.set(c, t, name)
 	if err != nil {
 		return err
@@ -416,7 +424,55 @@ func (f *nftFW) rewrite(c *nftables.Conn, t *nftables.Table, name string) error 
 			return err
 		}
 	}
-	return c.Flush()
+	return nil
+}
+
+// Replace makes entries the whole content of the ban, perm and ratelim sets
+// in one transaction (the table's bans.json-style source of truth wins over
+// whatever Ensure imported from the kernel).
+func (f *nftFW) Replace(entries []Entry) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	es, err := validateEntries(entries, f.now())
+	if err != nil {
+		return err
+	}
+	c, err := nftables.New()
+	if err != nil {
+		return err
+	}
+	t, err := findTable(c)
+	if err != nil {
+		return err
+	}
+	if t == nil {
+		return errors.New("nft: table watchtower missing (was Ensure called?)")
+	}
+	recs := map[string]*recordSet{}
+	for _, sp := range setSpecs {
+		if !strings.HasPrefix(sp.name, "allow") {
+			recs[sp.name] = &recordSet{}
+		}
+	}
+	for _, e := range es {
+		recs[setName(baseName(e.Kind), e.Prefix.Addr().Is6())].add(prefixSpan(e.Prefix), e.Deadline)
+	}
+	old := f.recs
+	f.recs = recs
+	for _, sp := range setSpecs {
+		if strings.HasPrefix(sp.name, "allow") {
+			continue
+		}
+		if err := f.queueRewrite(c, t, sp.name); err != nil {
+			f.recs = old
+			return err
+		}
+	}
+	if err := c.Flush(); err != nil {
+		f.recs = old
+		return err
+	}
+	return nil
 }
 
 // Add never shortens: the address stays blocked until the latest deadline of

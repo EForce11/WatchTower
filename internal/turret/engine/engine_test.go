@@ -828,3 +828,73 @@ func TestPersistFailureRetriedOnNextMutationAndClose(t *testing.T) {
 		t.Fatalf("Close did not flush: %s", b)
 	}
 }
+
+func TestRestartUnbanOfMergedImportedSpan(t *testing.T) {
+	e := newEnv(t)
+	e.expect(e.admin("p1", synapsev1.Action_ACTION_BAN_PERM, "203.0.113.1", 0), okRes)
+	e.expect(e.admin("p2", synapsev1.Action_ACTION_BAN_PERM, "203.0.113.2", 0), okRes)
+	// Restart: the kernel table holds the two perms merged into one interval.
+	e.fw = nft.NewFakeFrom(e.fw)
+	e.deps.FW = e.fw
+	e.start()
+	e.expect(e.admin("u1", synapsev1.Action_ACTION_UNBAN, "203.0.113.1", 0), okRes)
+	if e.fw.Blocked(nft.KindPerm, netip.MustParseAddr("203.0.113.1")) {
+		t.Fatal("unbanned address still dropped")
+	}
+	if !e.fw.Blocked(nft.KindPerm, netip.MustParseAddr("203.0.113.2")) {
+		t.Fatal("other perm ban lost")
+	}
+}
+
+func TestRestartWithoutStateFileKeepsImportedKernelState(t *testing.T) {
+	e := newEnv(t)
+	e.fw.Add(nft.KindPerm, pfx("198.18.0.0/15"), 0) //nolint:errcheck // fake
+	e.fw = nft.NewFakeFrom(e.fw)
+	e.deps.FW = e.fw
+	e.start() // no bans.json exists
+	if !e.fw.Blocked(nft.KindPerm, netip.MustParseAddr("198.18.0.1")) {
+		t.Fatal("imported state must be kept when bans.json is absent")
+	}
+	for _, c := range e.fw.Calls() {
+		if c.Op == "Replace" {
+			t.Fatal("Replace must not run without a state file")
+		}
+	}
+}
+
+func TestEmptyStateFileIsAuthoritative(t *testing.T) {
+	e := newEnv(t)
+	e.expect(e.admin("p1", synapsev1.Action_ACTION_BAN_PERM, "203.0.113.1", 0), okRes)
+	e.expect(e.admin("u1", synapsev1.Action_ACTION_UNBAN, "203.0.113.1", 0), okRes)
+	f := nft.NewFakeAt(e.clk.Now)
+	f.Add(nft.KindPerm, pfx("198.18.0.0/15"), 0) //nolint:errcheck // fake
+	e.fw, e.deps.FW = f, f
+	e.start() // bans.json exists with zero records
+	if f.Blocked(nft.KindPerm, netip.MustParseAddr("198.18.0.1")) {
+		t.Fatal("an empty bans.json must clear stale kernel bans")
+	}
+}
+
+func TestIOCSetCachedUntilBundleChanges(t *testing.T) {
+	e := newEnv(t)
+	bundle := filepath.Join(t.TempDir(), "ioc.bin")
+	if err := os.WriteFile(bundle, []byte("v1"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loads := 0
+	e.deps.Cfg.IOCBundlePath = bundle
+	e.deps.IOC = func() (*ioc.Set, error) { loads++; return &ioc.Set{}, nil }
+	e.start()
+	e.expect(e.auto("k1", synapsev1.Action_ACTION_KILL_TEMP_MALWARE, "pid:888", 0), okRes)
+	e.expect(e.auto("k2", synapsev1.Action_ACTION_KILL_TEMP_MALWARE, "pid:889", 0), okRes)
+	if loads != 1 {
+		t.Fatalf("unchanged bundle loaded %d times, want 1", loads)
+	}
+	if err := os.WriteFile(bundle, []byte("version-2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e.expect(e.auto("k3", synapsev1.Action_ACTION_KILL_TEMP_MALWARE, "pid:890", 0), okRes)
+	if loads != 2 {
+		t.Fatalf("modified bundle loaded %d times, want 2", loads)
+	}
+}

@@ -895,3 +895,82 @@ func TestOtherTablesUntouched(t *testing.T) {
 		t.Fatal("watchtower table should be gone")
 	}
 }
+
+// restarted simulates a daemon restart: a fresh instance that imports the
+// kernel contents on Ensure.
+func restarted(t *testing.T) Firewall {
+	t.Helper()
+	fw, err := NewNFT()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	return fw
+}
+
+func TestReplaceSplitsMergedAdjacentPerms(t *testing.T) {
+	p, addr, fw1 := neverShortenSetup(t)
+	for _, s := range []string{"10.99.0.2/32", "10.99.0.3/32"} {
+		if err := fw1.Add(KindPerm, netip.MustParsePrefix(s), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustBeBlockedFrom(t, p, bHost, addr)
+	mustBeBlockedFrom(t, p, bOther, addr)
+	fw2 := restarted(t) // imports the merged [.2,.4) interval
+	if err := fw2.Replace([]Entry{{Kind: KindPerm, Prefix: netip.MustParsePrefix("10.99.0.3/32")}}); err != nil {
+		t.Fatal(err)
+	}
+	mustReachFrom(t, p, bHost, addr)
+	mustBeBlockedFrom(t, p, bOther, addr)
+	// Later mutations stay consistent with the replaced records.
+	if err := fw2.Remove(netip.MustParsePrefix("10.99.0.3/32")); err != nil {
+		t.Fatal(err)
+	}
+	mustReachFrom(t, p, bOther, addr)
+}
+
+func TestReplaceDropsNarrowerSplitOfWider(t *testing.T) {
+	p, addr, fw1 := neverShortenSetup(t)
+	if err := fw1.Add(KindPerm, netip.MustParsePrefix("10.99.0.0/24"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw1.Add(KindPerm, netip.MustParsePrefix("10.99.0.3/32"), 0); err != nil {
+		t.Fatal(err)
+	}
+	fw2 := restarted(t)
+	if err := fw2.Replace([]Entry{{Kind: KindPerm, Prefix: netip.MustParsePrefix("10.99.0.3/32")}}); err != nil {
+		t.Fatal(err)
+	}
+	mustReachFrom(t, p, bHost, addr)
+	mustBeBlockedFrom(t, p, bOther, addr)
+}
+
+func TestReplaceTimedRatelimAndExpired(t *testing.T) {
+	fw := ensured(t)
+	if err := fw.Add(KindPerm, netip.MustParsePrefix("203.0.113.9/32"), 0); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	err := fw.Replace([]Entry{
+		{Kind: KindBan, Prefix: netip.MustParsePrefix("203.0.113.1/32"), Deadline: now.Add(time.Hour)},
+		{Kind: KindBan, Prefix: netip.MustParsePrefix("203.0.113.2/32"), Deadline: now.Add(-time.Second)}, // expired: skipped
+		{Kind: KindRateLimit, Prefix: netip.MustParsePrefix("2001:db8::1/128"), Deadline: now.Add(time.Hour)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasStart(t, "ban4", netip.MustParseAddr("203.0.113.1")) ||
+		hasStart(t, "ban4", netip.MustParseAddr("203.0.113.2")) ||
+		len(setElems(t, "perm4")) != 0 || len(setElems(t, "ratelim6")) != 1 {
+		t.Fatal("Replace did not produce exactly the given entries")
+	}
+	if e := expiresOf(t, "ban4", netip.MustParseAddr("203.0.113.1")); e < 50*time.Minute {
+		t.Fatalf("timeout lost: %v", e)
+	}
+	if err := fw.Replace([]Entry{{Kind: KindRateLimit, Prefix: netip.MustParsePrefix("10.0.0.0/24"), Deadline: now.Add(time.Hour)}}); err == nil {
+		t.Fatal("non-single ratelimit entry must be rejected")
+	}
+}
