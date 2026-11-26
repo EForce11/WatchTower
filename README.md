@@ -154,11 +154,16 @@ make test-netns
 
 ### Turret emergency rollback
 
-`wt-turret` bans through its own nftables table. If a ban ever locks you out, remove the table (no config needed):
+`wt-turret` bans through its own nftables table and re-applies the persisted bans (`<state_dir>/bans.json`) on every start. If a ban ever locks you out (no config needed):
 
 ```bash
-sudo ./wt-turret panic-flush
+sudo systemctl stop wt-turret            # or stop the process
+sudo ./wt-turret panic-flush --clear-state
+# fix the cause of the lockout, then start wt-turret again
+sudo systemctl start wt-turret
 ```
+
+`--clear-state` also renames `bans.json` to `bans.json.flushed-<unix seconds>` (kept for forensics; `--state-dir DIR` overrides the default `/var/lib/watchtower/turret`). Without it the table is removed but the bans come back on the next start. Stop the daemon first: while it runs, its firewall calls fail because the table is gone.
 
 ---
 
