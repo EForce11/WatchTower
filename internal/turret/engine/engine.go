@@ -228,11 +228,12 @@ func ttlOf(secs int64) (ttl time.Duration, clamped bool) {
 	}
 }
 
-// Close flushes ban state that could not be persisted earlier.
+// Close flushes ban state that could not be persisted earlier and stops the
+// firewall's background work (its kernel contents stay in place).
 func (e *Engine) Close() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.save()
+	return errors.Join(e.save(), e.d.FW.Close())
 }
 
 // save persists the store (pruning expired records); e.mu is held. Every
