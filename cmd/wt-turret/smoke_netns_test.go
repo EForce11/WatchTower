@@ -12,8 +12,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/google/nftables"
 
 	synapsev1 "github.com/EForce11/WatchTower/pkg/synapse/v1"
 )
@@ -54,12 +57,18 @@ func TestServeSmoke(t *testing.T) {
 		t.Fatalf("result = %v (%s), want APPLIED", resp.GetResult(), resp.GetDetail())
 	}
 
+	if !hasTable(t) {
+		t.Fatal("table inet watchtower missing after APPLIED")
+	}
 	if code, _, stderr := runCmd(t, "panic-flush"); code != 0 {
 		t.Fatalf("panic-flush code=%d stderr=%q", code, stderr)
 	}
+	if hasTable(t) {
+		t.Fatal("table inet watchtower still present after panic-flush")
+	}
 
-	// SIGTERM shuts down cleanly (exit 0) and leaves the firewall alone.
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+	// SIGTERM shuts down cleanly (exit 0).
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -68,7 +77,7 @@ func TestServeSmoke(t *testing.T) {
 			t.Fatalf("serve exit: %v", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("serve did not exit on SIGINT")
+		t.Fatal("serve did not exit on SIGTERM")
 	}
 }
 
@@ -113,4 +122,22 @@ func dialRetry(t *testing.T, sock string) net.Conn {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func hasTable(t *testing.T) bool {
+	t.Helper()
+	c, err := nftables.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tabs, err := c.ListTablesOfFamily(nftables.TableFamilyINet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tb := range tabs {
+		if tb.Name == "watchtower" {
+			return true
+		}
+	}
+	return false
 }

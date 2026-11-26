@@ -57,7 +57,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Unit tests
-        run: go test -race ./internal/... ./pkg/...
+        run: go test -race ./internal/... ./pkg/... ./cmd/wt-turret/
       - name: Integration test
         run: go test ./test/integration/
 

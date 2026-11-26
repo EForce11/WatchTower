@@ -28,7 +28,7 @@ verify: proto-check
 	$(MAKE) lint
 	@test -n "$$WT_TEST_DATABASE_URL" || echo "⚠️  WT_TEST_DATABASE_URL not set: migration tests skipped"
 	go test -race ./internal/... ./pkg/...
-	go test ./test/integration/
+	go test ./test/integration/ ./cmd/wt-turret/
 	@if unshare --user --map-root-user --net true 2>/dev/null; then \
 		$(MAKE) test-netns; \
 	else \
