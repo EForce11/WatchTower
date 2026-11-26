@@ -22,11 +22,15 @@ type Cache struct {
 	now  func() time.Time
 }
 
-// Open loads the cache at path, dropping expired entries. A missing file is
+// Open loads the cache at path using clock (nil means time.Now), dropping expired entries. A missing file is
 // an empty cache; a corrupt file is an error (fail closed). If entries were
 // dropped the file is rewritten.
-func Open(path string, now time.Time) (*Cache, error) {
-	c := &Cache{path: path, ids: map[string]int64{}, now: time.Now}
+func Open(path string, clock func() time.Time) (*Cache, error) {
+	if clock == nil {
+		clock = time.Now
+	}
+	c := &Cache{path: path, ids: map[string]int64{}, now: clock}
+	nowUnix := clock().Unix()
 	b, err := os.ReadFile(path) //nolint:gosec // caller-supplied state path
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -40,7 +44,7 @@ func Open(path string, now time.Time) (*Cache, error) {
 	}
 	pruned := false
 	for id, exp := range loaded {
-		if exp < now.Unix() {
+		if exp < nowUnix {
 			pruned = true
 			continue
 		}
@@ -58,8 +62,8 @@ func Open(path string, now time.Time) (*Cache, error) {
 func (c *Cache) Seen(id string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	_, ok := c.ids[id]
-	return ok
+	exp, ok := c.ids[id]
+	return ok && exp >= c.now().Unix()
 }
 
 // Record atomically checks and stores id until expiresAt and persists the

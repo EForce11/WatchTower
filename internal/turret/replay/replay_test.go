@@ -14,9 +14,11 @@ import (
 
 var now = time.Unix(1_800_000_000, 0)
 
+func fixed(t time.Time) func() time.Time { return func() time.Time { return t } }
+
 func TestRecordSeenAndReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "replay.json")
-	c, err := Open(path, now)
+	c, err := Open(path, fixed(now))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +35,7 @@ func TestRecordSeenAndReopen(t *testing.T) {
 	if err != nil || st.Mode().Perm() != 0o600 {
 		t.Fatalf("stat: %v %v", st, err)
 	}
-	c2, err := Open(path, now)
+	c2, err := Open(path, fixed(now))
 	if err != nil || !c2.Seen("a") {
 		t.Fatalf("reopen: %v", err)
 	}
@@ -41,14 +43,14 @@ func TestRecordSeenAndReopen(t *testing.T) {
 
 func TestOpenPrunesExpired(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "replay.json")
-	c, _ := Open(path, now)
+	c, _ := Open(path, fixed(now))
 	if err := c.Record("a", now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Record("b", now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	c2, err := Open(path, now.Add(2*time.Minute))
+	c2, err := Open(path, fixed(now.Add(2*time.Minute)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +68,7 @@ func TestCorruptFileFailsClosed(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{not json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(path, now); err == nil {
+	if _, err := Open(path, fixed(now)); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -77,14 +79,14 @@ func TestLeftoverTmpIgnored(t *testing.T) {
 	if err := os.WriteFile(path+".stale.tmp", []byte("garbage"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := Open(path, now)
+	c, err := Open(path, fixed(now))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Record("a", now.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	c2, err := Open(path, now)
+	c2, err := Open(path, fixed(now))
 	if err != nil || !c2.Seen("a") {
 		t.Fatal(err)
 	}
@@ -95,14 +97,14 @@ func TestNullFileIsCorrupt(t *testing.T) {
 	if err := os.WriteFile(path, []byte("null"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(path, now); err == nil {
+	if _, err := Open(path, fixed(now)); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
 func TestRecordRejectsDuplicate(t *testing.T) {
-	c, _ := Open(filepath.Join(t.TempDir(), "replay.json"), now)
-	exp := time.Now().Add(time.Hour)
+	c, _ := Open(filepath.Join(t.TempDir(), "replay.json"), fixed(now))
+	exp := now.Add(time.Hour)
 	if err := c.Record("a", exp); err != nil {
 		t.Fatal(err)
 	}
@@ -112,8 +114,8 @@ func TestRecordRejectsDuplicate(t *testing.T) {
 }
 
 func TestConcurrentRecordExactlyOnce(t *testing.T) {
-	c, _ := Open(filepath.Join(t.TempDir(), "replay.json"), now)
-	exp := time.Now().Add(time.Hour)
+	c, _ := Open(filepath.Join(t.TempDir(), "replay.json"), fixed(now))
+	exp := now.Add(time.Hour)
 	const n = 16
 	var wg sync.WaitGroup
 	var ok, seen atomic.Int32
@@ -143,8 +145,8 @@ func TestRecordPersistFailureLeavesCacheUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "replay.json")
-	c, _ := Open(path, now)
-	exp := time.Now().Add(time.Hour)
+	c, _ := Open(path, fixed(now))
+	exp := now.Add(time.Hour)
 	if err := c.Record("old", exp); err != nil {
 		t.Fatal(err)
 	}
@@ -164,8 +166,8 @@ func TestRecordPersistFailureLeavesCacheUnchanged(t *testing.T) {
 
 func TestFileModeAfterSecondWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "replay.json")
-	c, _ := Open(path, now)
-	exp := time.Now().Add(time.Hour)
+	c, _ := Open(path, fixed(now))
+	exp := now.Add(time.Hour)
 	for _, id := range []string{"a", "b"} {
 		if err := c.Record(id, exp); err != nil {
 			t.Fatal(err)
@@ -178,15 +180,40 @@ func TestFileModeAfterSecondWrite(t *testing.T) {
 
 func TestRecordPrunesExpired(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "replay.json")
-	c, _ := Open(path, now)
-	if err := c.Record("stale", time.Now().Add(-time.Hour)); err != nil {
+	c, _ := Open(path, fixed(now))
+	if err := c.Record("stale", now.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Record("fresh", time.Now().Add(time.Hour)); err != nil {
+	if err := c.Record("fresh", now.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(path)
 	if strings.Contains(string(b), "stale") {
 		t.Fatalf("not pruned: %s", b)
+	}
+}
+
+func TestClockDrivesExpiry(t *testing.T) {
+	cur := now
+	c, err := Open(filepath.Join(t.TempDir(), "replay.json"), func() time.Time { return cur })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Record("a", now.Add(60*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	cur = now.Add(59 * time.Second)
+	if !c.Seen("a") {
+		t.Fatal("must be seen at T+59s")
+	}
+	if err := c.Record("a", now.Add(time.Hour)); !errors.Is(err, ErrSeen) {
+		t.Fatalf("got %v", err)
+	}
+	cur = now.Add(61 * time.Second)
+	if c.Seen("a") {
+		t.Fatal("must not be seen at T+61s")
+	}
+	if err := c.Record("a", now.Add(time.Hour)); err != nil {
+		t.Fatalf("re-record after expiry: %v", err)
 	}
 }
