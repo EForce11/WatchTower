@@ -23,7 +23,7 @@ const route4 = "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t
 	"eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n" +
 	"eth0\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n"
 
-const route6 = "00000000000000000000000000000000 00 00000000000000000000000000000000 00 fe800000000000000000000000000001 00000400 00000001 00000000 00000003 eth0\n" +
+const route6 = "00000000000000000000000000000000 00 00000000000000000000000000000000 00 20010db8ffff00000000000000000001 00000400 00000001 00000000 00000003 eth0\n" +
 	"fe800000000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001 eth0\n"
 
 type fixture struct {
@@ -45,7 +45,7 @@ func newFixture(t *testing.T) fixture {
 			return []netip.Prefix{netip.MustParsePrefix("192.168.1.23/24")}, nil
 		},
 		RouteFiles: [2]string{write(t, d, "route", route4), write(t, d, "ipv6_route", route6)},
-		ResolvConf: write(t, d, "resolv.conf", "# c\nsearch example\nnameserver 9.9.9.9\nnameserver 2620:fe::fe\n"),
+		ResolvConf: write(t, d, "resolv.conf", "# c\nsearch example\nnameserver 9.9.9.9\nnameserver 2620:fe::fe\nnameserver 2620:fe::9%eth0\nnameserver fe80::53%eth0\n"),
 	}
 	return fixture{cfg, src, d}
 }
@@ -58,10 +58,10 @@ func TestDiscoverProtects(t *testing.T) {
 	}
 	for _, s := range []string{
 		"127.0.0.1/32", "::1/128", "169.254.1.1/32", "fe80::5/128", // hardcoded
-		"192.168.1.23/32",               // interface address
-		"192.168.1.1/32",                // v4 default gateway
-		"fe80::1/128",                   // v6 default gateway
-		"9.9.9.9/32", "2620:fe::fe/128", // resolvers
+		"192.168.1.23/32",                                 // interface address
+		"192.168.1.1/32",                                  // v4 default gateway
+		"fe80::1/128",                                     // v6 default gateway
+		"9.9.9.9/32", "2620:fe::fe/128", "2620:fe::9/128", // resolvers
 		"192.0.2.10/32",        // core endpoint
 		"10.8.0.77/32",         // wireguard
 		"203.0.113.50/32",      // whitelist IP
@@ -125,5 +125,51 @@ func TestDiscoverIsImmutable(t *testing.T) {
 	ps[0] = netip.MustParsePrefix("1.2.3.4/32")
 	if p.Prefixes()[0] == ps[0] {
 		t.Fatal("Prefixes must return a copy")
+	}
+}
+
+func TestOverlapsFailsClosed(t *testing.T) {
+	f := newFixture(t)
+	p, err := Discover(f.cfg, f.src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"::ffff:10.8.0.5/128", "::ffff:10.8.0.0/120", "::ffff:0:0/64"} {
+		if _, hit := p.Overlaps(netip.MustParsePrefix(s)); !hit {
+			t.Errorf("%s must hit", s)
+		}
+	}
+	if _, hit := p.Overlaps(netip.Prefix{}); !hit {
+		t.Error("invalid prefix must hit")
+	}
+	if _, hit := p.Overlaps(netip.MustParsePrefix("::ffff:203.0.113.7/128")); hit {
+		t.Error("mapped unprotected address must not hit")
+	}
+}
+
+func TestDiscoverStripsZonesAndRejectsBadInputs(t *testing.T) {
+	f := newFixture(t)
+	p, err := Discover(f.cfg, f.src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range p.Prefixes() {
+		if q.Addr().Zone() != "" {
+			t.Errorf("zone kept in %v", q)
+		}
+	}
+	f.src.ResolvConf = write(t, f.dir, "badresolv", "nameserver not-an-ip\n")
+	if _, err := Discover(f.cfg, f.src); err == nil {
+		t.Error("bad nameserver must error")
+	}
+	f = newFixture(t)
+	f.src.InterfaceAddrs = func() ([]netip.Prefix, error) { return nil, os.ErrInvalid }
+	if _, err := Discover(f.cfg, f.src); err == nil {
+		t.Error("interface error must propagate")
+	}
+	f = newFixture(t)
+	f.cfg.WhitelistFile = write(t, f.dir, "wide.txt", "::ffff:0:0/64\n")
+	if _, err := Discover(f.cfg, f.src); err == nil {
+		t.Error("unusable mapped whitelist prefix must error")
 	}
 }

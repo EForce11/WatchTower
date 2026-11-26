@@ -38,6 +38,9 @@ func NewReflexLimiter(b config.Budget, l config.Limiter, now Clock) *ReflexLimit
 // once the prefix threshold is crossed. ok is false when the budget is
 // exhausted. A prefix ban counts as one budget entry.
 func (r *ReflexLimiter) Admit(ip netip.Addr) (netip.Prefix, bool) {
+	if !ip.IsValid() {
+		return netip.Prefix{}, false
+	}
 	ip = ip.Unmap().WithZone("")
 	r.mu.Lock()
 	defer r.mu.Unlock()
