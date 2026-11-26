@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -196,5 +197,61 @@ func TestRefreshProtectedKeepsOldSetOnError(t *testing.T) {
 	defer set.mu.Unlock()
 	if len(set.sets) != 1 {
 		t.Fatalf("SetProtected calls = %d, want 1 (unchanged and error ticks must not call it)", len(set.sets))
+	}
+}
+
+type flakySetter struct {
+	mu    sync.Mutex
+	calls int
+	last  []netip.Prefix
+	ok    chan struct{}
+}
+
+func (f *flakySetter) SetProtected(p *safety.Protected) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.calls == 1 {
+		return errors.New("setallow failed")
+	}
+	f.last = p.Prefixes()
+	select {
+	case f.ok <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
+func TestRefreshProtectedRetriesFailedApply(t *testing.T) {
+	mk := func(a string) *safety.Protected {
+		p, err := safety.Discover(testCfg(), safety.Sources{
+			InterfaceAddrs: func() ([]netip.Prefix, error) { return []netip.Prefix{netip.MustParsePrefix(a)}, nil },
+			RouteFiles:     [2]string{"/nonexistent4", "/nonexistent6"},
+			ResolvConf:     "/nonexistent",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	old, next := mk("10.1.0.5/24"), mk("10.2.0.5/24")
+	set := &flakySetter{ok: make(chan struct{}, 1)}
+	stop := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		refreshProtected(stop, time.Millisecond, old, func() (*safety.Protected, error) { return next, nil }, set, discardLogger())
+		close(finished)
+	}()
+	select {
+	case <-set.ok:
+	case <-time.After(5 * time.Second):
+		t.Fatal("failed SetProtected was never retried")
+	}
+	close(stop)
+	<-finished
+	set.mu.Lock()
+	defer set.mu.Unlock()
+	if !slices.Equal(set.last, next.Prefixes()) {
+		t.Fatalf("last applied = %v, want %v", set.last, next.Prefixes())
 	}
 }

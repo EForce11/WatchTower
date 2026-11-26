@@ -114,6 +114,7 @@ func socketGroup(name string) (int, error) {
 // prepareSocketDir creates the socket's parent dir (0750, root:gid as root).
 func prepareSocketDir(socketPath string, gid int) error {
 	dir := filepath.Dir(socketPath)
+	// A pre-existing directory is used as is: its mode and group are not modified.
 	if _, err := os.Stat(dir); err == nil {
 		return nil
 	}
@@ -151,7 +152,10 @@ func refreshProtected(stop <-chan struct{}, interval time.Duration, cur *safety.
 			continue
 		}
 		if err := set.SetProtected(next); err != nil {
-			log.Error("applying protected set failed", "err", err)
+			// Keep cur so the next tick retries: the engine already uses
+			// the new set for overlap checks, but the allow list is stale.
+			log.Error("applying protected set failed; will retry", "err", err)
+			continue
 		}
 		cur = next
 		log.Info("protected set updated", "prefixes", fmt.Sprint(next.Prefixes()))
@@ -248,6 +252,9 @@ func runDaemon(cfg *config.Config, log *slog.Logger) error {
 	// Shutdown never flushes the firewall: bans persist across restarts.
 	if err := eng.Close(); err != nil {
 		log.Error("persisting ban state", "err", err)
+		if serveErr == nil {
+			serveErr = fmt.Errorf("persisting ban state: %w", err)
+		}
 	}
 	return serveErr
 }
