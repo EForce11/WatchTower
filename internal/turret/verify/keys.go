@@ -2,6 +2,7 @@
 package verify
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
@@ -40,9 +41,15 @@ func KeyID(pub ed25519.PublicKey) string {
 
 // ParsePublicKeyPEM parses a PKIX PEM-encoded Ed25519 public key.
 func ParsePublicKeyPEM(b []byte) (ed25519.PublicKey, error) {
-	blk, _ := pem.Decode(b)
+	blk, rest := pem.Decode(b)
 	if blk == nil {
 		return nil, errors.New("no PEM block found")
+	}
+	if blk.Type != "PUBLIC KEY" {
+		return nil, fmt.Errorf("unexpected PEM type %q", blk.Type)
+	}
+	if len(bytes.TrimSpace(rest)) != 0 {
+		return nil, errors.New("trailing data after PEM block")
 	}
 	k, err := x509.ParsePKIXPublicKey(blk.Bytes)
 	if err != nil {
