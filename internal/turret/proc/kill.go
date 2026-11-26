@@ -2,6 +2,7 @@ package proc
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,9 +39,21 @@ func Kill(pid int, expectExe string, expectStart uint64) error {
 	return unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
 }
 
+// ErrTooLarge means the executable is not a regular file or is too big to hash.
+var ErrTooLarge = errors.New("proc: executable not a regular file or too large")
+
+const maxExeSize = 512 << 20
+
+// afterSignalHook is a test seam called between the signal and the chmod.
+var afterSignalHook func(exePath string)
+
 // KillTempMalware kills pid when it runs from a temp directory and its binary
-// hash is in iocs, then chmods the executable to 0600. It returns the exe path.
+// hash is in iocs, then chmods the executable inode to 0600. It returns the
+// exe path (for reporting only).
 func KillTempMalware(pid int, iocs *ioc.Set, tempDirs []string) (string, error) {
+	if err := validateDirs(tempDirs); err != nil {
+		return "", err
+	}
 	fd, err := unix.PidfdOpen(pid, 0)
 	if err != nil {
 		return "", fmt.Errorf("proc: pidfd_open %d: %w", pid, err)
@@ -56,35 +69,85 @@ func KillTempMalware(pid int, iocs *ioc.Set, tempDirs []string) (string, error) 
 	if Immune(i, os.Getpid()) {
 		return "", ErrImmune
 	}
-	clean := filepath.Clean(i.Exe)
-	resolved, err := filepath.EvalSymlinks(i.Exe)
+	if err := checkTempPath(i.Exe, tempDirs); err != nil {
+		return "", err
+	}
+	// Hold the inode that is actually running; hash and chmod through it.
+	f, err := os.Open("/proc/" + strconv.Itoa(pid) + "/exe")
 	if err != nil {
-		return "", fmt.Errorf("proc: resolve exe: %w", err)
+		return "", fmt.Errorf("proc: open exe: %w", err)
 	}
-	if !underAny(clean, tempDirs) || !underAny(resolved, tempDirs) {
-		return "", ErrNotTempPath
-	}
-	h, err := hashProcExe(pid)
+	defer f.Close()
+	sum, err := hashRegular(f)
 	if err != nil {
 		return "", err
 	}
-	if !iocs.HasSHA256(h) {
+	if !iocs.HasSHA256(sum) {
 		return "", ErrNotInIOC
 	}
 	again, err := Inspect(pid)
 	if err != nil {
 		return "", err
 	}
-	if again.StartTime != i.StartTime {
+	if again.StartTime != i.StartTime || again.Exe != i.Exe {
 		return "", ErrMismatch
 	}
 	if err := unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0); err != nil {
 		return "", fmt.Errorf("proc: signal %d: %w", pid, err)
 	}
-	if err := os.Chmod(i.Exe, 0o600); err != nil {
-		return i.Exe, fmt.Errorf("proc: chmod %s: %w", i.Exe, err)
+	return i.Exe, chmodInode(f, i.Exe)
+}
+
+// chmodInode fchmods the inode that ran; the path is for reporting only.
+func chmodInode(f *os.File, exe string) error {
+	if afterSignalHook != nil {
+		afterSignalHook(exe)
 	}
-	return i.Exe, nil
+	if err := f.Chmod(0o600); err != nil {
+		return fmt.Errorf("proc: chmod %s: %w", exe, err)
+	}
+	return nil
+}
+
+// checkTempPath requires both the cleaned and the symlink-resolved exe path
+// to lie under a temp dir.
+func checkTempPath(exe string, tempDirs []string) error {
+	resolved, err := filepath.EvalSymlinks(exe)
+	if err != nil {
+		return fmt.Errorf("proc: resolve exe: %w", err)
+	}
+	if !underAny(filepath.Clean(exe), tempDirs) || !underAny(resolved, tempDirs) {
+		return ErrNotTempPath
+	}
+	return nil
+}
+
+// hashRegular hashes an open regular file of bounded size.
+func hashRegular(f *os.File) ([32]byte, error) {
+	var sum [32]byte
+	st, err := f.Stat()
+	if err != nil {
+		return sum, fmt.Errorf("proc: stat exe: %w", err)
+	}
+	if !st.Mode().IsRegular() || st.Size() > maxExeSize {
+		return sum, ErrTooLarge
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return sum, fmt.Errorf("proc: hash exe: %w", err)
+	}
+	copy(sum[:], h.Sum(nil))
+	return sum, nil
+}
+
+// validateDirs rejects empty, relative or root entries.
+func validateDirs(dirs []string) error {
+	for _, d := range dirs {
+		if !filepath.IsAbs(d) || filepath.Clean(d) == "/" {
+			return fmt.Errorf("proc: invalid temp dir %q", d)
+		}
+	}
+	return nil
 }
 
 // underAny reports whether p lies strictly beneath one of dirs, matching on
@@ -100,20 +163,4 @@ func underAny(p string, dirs []string) bool {
 		}
 	}
 	return false
-}
-
-// hashProcExe hashes the running binary via /proc/<pid>/exe, not its path.
-func hashProcExe(pid int) ([32]byte, error) {
-	var out [32]byte
-	f, err := os.Open("/proc/" + strconv.Itoa(pid) + "/exe")
-	if err != nil {
-		return out, fmt.Errorf("proc: open exe: %w", err)
-	}
-	defer f.Close()
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return out, fmt.Errorf("proc: hash exe: %w", err)
-	}
-	copy(out[:], h.Sum(nil))
-	return out, nil
 }

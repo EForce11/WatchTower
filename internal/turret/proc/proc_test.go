@@ -1,8 +1,13 @@
 package proc
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -11,24 +16,29 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/EForce11/WatchTower/internal/turret/ioc"
 	"github.com/EForce11/WatchTower/internal/turret/verify"
 	synapsev1 "github.com/EForce11/WatchTower/pkg/synapse/v1"
-
-	"crypto/ed25519"
-	"crypto/rand"
-	"crypto/x509"
-	"encoding/pem"
-
-	"google.golang.org/protobuf/proto"
 )
 
 // start launches cmd and guarantees it is killed and reaped on cleanup.
-func start(t *testing.T, path string) (cmd *exec.Cmd, done chan error) {
+func start(t *testing.T, path string) (*exec.Cmd, chan error) { //nolint:gocritic // two obvious results
+	t.Helper()
+	cmd, done, err := startE(t, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cmd, done
+}
+
+func startE(t *testing.T, path string) (cmd *exec.Cmd, done chan error, err error) {
 	t.Helper()
 	cmd = exec.Command(path, "30")
 	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+		return nil, nil, err
 	}
 	done = make(chan error, 1)
 	go func() { done <- cmd.Wait(); close(done) }()
@@ -39,7 +49,7 @@ func start(t *testing.T, path string) (cmd *exec.Cmd, done chan error) {
 		case <-time.After(5 * time.Second):
 		}
 	})
-	return cmd, done
+	return cmd, done, nil
 }
 
 func sleepPath(t *testing.T) string {
@@ -120,8 +130,12 @@ func TestImmune(t *testing.T) {
 		{"kernel flag", Info{PID: 99, Kernel: true}, true},
 		{"turret", Info{PID: 99, PPID: 5, Exe: "/usr/sbin/wt-turret"}, true},
 		{"wg", Info{PID: 99, PPID: 5, Exe: "/usr/bin/wg"}, true},
+		{"tmp wg", Info{PID: 99, PPID: 5, Exe: "/tmp/x/wg"}, false},
+		{"tmp sentry", Info{PID: 99, PPID: 5, Exe: "/tmp/x/wt-sentry"}, false},
 		{"sshd ppid1", Info{PID: 99, PPID: 1, Exe: "/usr/sbin/sshd"}, true},
+		{"tmp sshd ppid1", Info{PID: 99, PPID: 1, Exe: "/tmp/x/sshd"}, false},
 		{"sshd ppid500", Info{PID: 99, PPID: 500, Exe: "/usr/sbin/sshd"}, false},
+		{"usrfoo prefix", Info{PID: 99, PPID: 5, Exe: "/usr/binx/wg"}, false},
 		{"other", Info{PID: 99, PPID: 5, Exe: "/tmp/x"}, false},
 	}
 	for _, c := range cases {
@@ -301,4 +315,86 @@ func TestKillTempMalwareDeleted(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	assertAlive(t, done)
+}
+
+func TestKillTempMalwareChmodFollowsInodeNotPath(t *testing.T) {
+	dir := t.TempDir()
+	bin := copyBin(t, dir)
+	keep := filepath.Join(dir, "keep")
+	if err := os.Link(bin, keep); err != nil {
+		t.Fatal(err)
+	}
+	decoy := filepath.Join(t.TempDir(), "decoy")
+	if err := os.WriteFile(decoy, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd, done := start(t, bin)
+	afterSignalHook = func(exe string) {
+		_ = os.Remove(exe)
+		_ = os.Symlink(decoy, exe)
+	}
+	t.Cleanup(func() { afterSignalHook = nil })
+	if _, err := KillTempMalware(cmd.Process.Pid, iocSet(t, hashOf(t, keep)), []string{dir + "/"}); err != nil {
+		t.Fatal(err)
+	}
+	assertKilled(t, done)
+	if st, err := os.Stat(decoy); err != nil || st.Mode().Perm() != 0o644 {
+		t.Fatalf("decoy mode changed: %v %v", st, err)
+	}
+	if st, err := os.Stat(keep); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("original inode mode: %v %v", st, err)
+	}
+}
+
+func TestKillTempMalwareRejectsBadTempDirs(t *testing.T) {
+	for _, d := range []string{"/", "tmp/", ""} {
+		if _, err := KillTempMalware(os.Getpid(), iocSet(t), []string{d}); err == nil {
+			t.Errorf("dir %q accepted", d)
+		}
+	}
+}
+
+func TestKillTempMalwareMemfd(t *testing.T) {
+	fd, err := unix.MemfdCreate("evil", 0)
+	if err != nil {
+		t.Skipf("memfd_create: %v", err)
+	}
+	mf := os.NewFile(uintptr(fd), "memfd")
+	t.Cleanup(func() { _ = mf.Close() })
+	src, err := os.Open(sleepPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if _, err := io.Copy(mf, src); err != nil {
+		t.Fatal(err)
+	}
+	cmd, done, err := startE(t, fmt.Sprintf("/proc/%d/fd/%d", os.Getpid(), fd))
+	if err != nil {
+		t.Skipf("exec from memfd not permitted: %v", err)
+	}
+	if i, err := Inspect(cmd.Process.Pid); err != nil || !i.Memfd {
+		t.Skipf("exe not memfd-backed: %+v %v", i, err)
+	}
+	if _, err := KillTempMalware(cmd.Process.Pid, iocSet(t), DefaultTempDirs); !errors.Is(err, ErrMemfdOrDeleted) {
+		t.Fatalf("err = %v", err)
+	}
+	assertAlive(t, done)
+}
+
+func TestInspectLiveFileNamedDeleted(t *testing.T) {
+	dir := t.TempDir()
+	bin := copyBin(t, dir)
+	named := bin + " (deleted)"
+	if err := os.Rename(bin, named); err != nil {
+		t.Fatal(err)
+	}
+	cmd, _ := start(t, named)
+	i, err := Inspect(cmd.Process.Pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i.Deleted || i.Exe != named {
+		t.Fatalf("misflagged: %+v", i)
+	}
 }
