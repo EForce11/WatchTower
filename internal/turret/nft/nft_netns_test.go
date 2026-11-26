@@ -1003,3 +1003,45 @@ func TestReplaceTimedRatelimAndExpired(t *testing.T) {
 		t.Fatal("non-single ratelimit entry must be rejected")
 	}
 }
+
+// TestEnsureImportsAfterKernelExpiry simulates Turret having been down past
+// the kernel backstop: the kernel expired the starts of the outer segments
+// and left their end elements behind. A restart must still import the live
+// segment (and the first rewrite cleans the leftovers up).
+func TestEnsureImportsAfterKernelExpiry(t *testing.T) {
+	p, addr, _ := neverShortenSetup(t)
+	c := newConn(t)
+	s, err := c.GetSetByName(inetTable(TableName), "ban4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := func(a string) []byte { return netip.MustParseAddr(a).AsSlice() }
+	// Raw elements without margin: [.0,.2)@1s [.2,.3)@1h [.3,1.0)@1s.
+	if err := c.SetAddElements(s, []nftables.SetElement{
+		{Key: k("10.99.0.0"), Timeout: time.Second},
+		{Key: k("10.99.0.2"), IntervalEnd: true},
+		{Key: k("10.99.0.2"), Timeout: time.Hour},
+		{Key: k("10.99.0.3"), IntervalEnd: true},
+		{Key: k("10.99.0.3"), Timeout: time.Second},
+		{Key: k("10.99.1.0"), IntervalEnd: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, 5*time.Second, "kernel to expire the outer starts", func() bool {
+		return !hasStart(t, "ban4", netip.MustParseAddr("10.99.0.0"))
+	})
+	fw := restarted(t)
+	if err := fw.Add(KindBan, netip.MustParsePrefix("192.0.2.1/32"), time.Hour); err != nil {
+		t.Fatal(err) // forces a rewrite of ban4 from the imported records
+	}
+	mustBeBlockedFrom(t, p, bHost, addr)
+	mustReachFrom(t, p, bOther, addr)
+	for _, e := range setElems(t, "ban4") {
+		if a, _ := netip.AddrFromSlice(e.Key); e.IntervalEnd && (a.String() == "10.99.1.0") {
+			t.Fatal("leftover end element survived the rewrite")
+		}
+	}
+}

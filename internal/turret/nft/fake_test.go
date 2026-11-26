@@ -5,6 +5,8 @@ import (
 	"net/netip"
 	"testing"
 	"time"
+
+	"github.com/google/nftables"
 )
 
 func mp(s string) netip.Prefix { return netip.MustParsePrefix(s) }
@@ -239,5 +241,28 @@ func TestFakeReplaceAndImport(t *testing.T) {
 	}
 	if err := g.Replace([]Entry{{Kind: KindRateLimit, Prefix: mp("10.0.0.0/24"), Deadline: c.now().Add(time.Minute)}}); err == nil {
 		t.Fatal("invalid entry must be rejected")
+	}
+}
+
+func TestParseSpansOrphanEnds(t *testing.T) {
+	k := func(s string) []byte { return netip.MustParseAddr(s).AsSlice() }
+	// What the kernel leaves after the starts of [.0,.2) and [.3,1.0) expired
+	// around a live [.2,.3).
+	el := []nftables.SetElement{
+		{Key: k("10.99.1.0"), IntervalEnd: true},
+		{Key: k("10.99.0.3"), IntervalEnd: true},
+		{Key: k("10.99.0.2"), Expires: time.Minute},
+		{Key: k("10.99.0.2"), IntervalEnd: true},
+	}
+	if _, err := parseSpans(el, false); err == nil {
+		t.Fatal("orphan end accepted in a set without timeouts")
+	}
+	got, err := parseSpans(el, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := prefixSpan(netip.MustParsePrefix("10.99.0.2/32"))
+	if len(got) != 1 || !got[0].equal(want) || got[0].expires != time.Minute {
+		t.Fatalf("spans = %+v, want [%+v]", got, want)
 	}
 }

@@ -373,7 +373,7 @@ func (f *nftFW) load(c *nftables.Conn, t *nftables.Table) error {
 			return now.Add(e - expiryMargin)
 		}
 		if s.Interval {
-			spans, err := parseSpans(el)
+			spans, err := parseSpans(el, sp.timeout)
 			if err != nil {
 				return fmt.Errorf("nft: import %s: %w", sp.name, err)
 			}
