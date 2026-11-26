@@ -416,7 +416,7 @@ table inet watchtower {
 - Changes are applied as nftables transactions through `google/nftables` (atomic; no shelling out).
 - Priority `-10` runs before the default filter chains (priority 0), including the iptables-nft compatibility tables, so bans apply regardless of existing `ESTABLISHED,RELATED` accepts.
 - `allow4/allow6` are evaluated first, so even a bug that inserts a self-preservation address into a ban set cannot cut management access.
-- **Rollback:** `wt-turret panic-flush` deletes `table inet watchtower`. This is the documented emergency procedure and is tested in CI.
+- **Rollback:** `wt-turret panic-flush` deletes `table inet watchtower`. This is the documented emergency procedure and is tested in CI. Bans are persisted in `<state_dir>/bans.json` and re-applied on start (it is authoritative after a restart), so the full procedure is: stop `wt-turret`, run `wt-turret panic-flush --clear-state` (which also renames `bans.json` to `bans.json.flushed-<unix>` for forensics), fix the cause, start again. Without `--clear-state` the bans, including the one that caused the lockout, return on the next start.
 - Hosts using legacy iptables only (no nftables kernel support) are out of scope for v1.
 
 #### 3.4.3 Process Termination
@@ -832,6 +832,8 @@ message WebAuthnAssertion {
 
 Turret verification order: (1) `key_id` known and allowed for this action (§3.4.1 table); (2) signature over `payload` bytes; (3) parse payload; (4) `agent_id` matches; (5) `now` within `[issued_at − 30 s, expires_at]`; (6) `command_id` not in the seen-ID cache (kept until `expires_at`, persisted across restarts); (7) Safety Layer. Every refusal is reported back to Core and audited.
 
+In v0.4.0 the safety/policy checks run before the replay record is written, so a command refused by the safety layer does not burn its `command_id` and may be retried within its lifetime. This is intentional: a refusal has no side effect.
+
 Because Sentry only forwards `SignedCommand` bytes, a compromised Sentry can drop or delay commands but cannot alter or forge them.
 
 #### 5.2.1 Replay cache
@@ -916,7 +918,7 @@ make demo                                             # docker-compose demo stac
 
 # Integrity & emergencies
 wt-cli audit verify --anchor <hash>
-wt-turret panic-flush                                  # on an agent: remove every WatchTower firewall rule
+wt-turret panic-flush --clear-state                    # on an agent (stop wt-turret first): remove every WatchTower firewall rule and set bans.json aside
 ```
 
 ---
@@ -974,6 +976,8 @@ README roadmap and CHANGELOG must be updated in the same change that starts Phas
 
 **Out of scope / known limitations:**
 - **Root on a protected host** can stop Sentry and Turret, edit their config and remove the nftables table. WatchTower turns this into a signal (heartbeat loss, FIM on `/etc/watchtower`, `DEAD` agent alert) but cannot prevent it.
+- **Clock jumps:** a backward wall-clock jump past a command's `expires_at` can revive already-pruned replay ids, so an old signed command could be accepted again if it is still within its (clock-relative) validity window.
+- **Unwritable state dir at runtime:** Reflex bans still apply (with a warning) but every signed command fails (`FAILED`) because the replay record cannot be persisted. This fails closed; use `wt-turret panic-flush` to recover.
 - **Kernel rootkits** and eBPF-aware evasion.
 - **Tier C visibility** misses short-lived processes and cannot attribute other users' connections to processes; operators should be told this, which is why the tier is shown everywhere.
 - **Encrypted application traffic** is visible only through application logs; there is no TLS interception or packet capture.
