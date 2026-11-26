@@ -1,0 +1,450 @@
+// Package engine ties verification, the safety layer, the firewall and
+// process killing together behind one request handler.
+package engine
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/netip"
+	"os"
+	"path/filepath"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/EForce11/WatchTower/internal/turret/config"
+	"github.com/EForce11/WatchTower/internal/turret/ioc"
+	"github.com/EForce11/WatchTower/internal/turret/nft"
+	"github.com/EForce11/WatchTower/internal/turret/proc"
+	"github.com/EForce11/WatchTower/internal/turret/replay"
+	"github.com/EForce11/WatchTower/internal/turret/safety"
+	"github.com/EForce11/WatchTower/internal/turret/verify"
+	synapsev1 "github.com/EForce11/WatchTower/pkg/synapse/v1"
+)
+
+// maxTTL clamps client-supplied TTLs so converting seconds to a Duration
+// cannot overflow. Policy limits are far below this.
+const maxTTL = 365 * 24 * time.Hour
+
+const stateFile = "bans.json"
+
+// Deps are the engine's collaborators. Keys, Replay, Protected, Limiter and
+// FW are required; the rest default to the production implementations.
+type Deps struct {
+	Cfg       config.Config
+	Keys      *verify.Keyring
+	Replay    *replay.Cache // opened with the same clock as Now
+	Protected *safety.Protected
+	Limiter   *safety.ReflexLimiter
+	FW        nft.Firewall
+	IOC       func() (*ioc.Set, error)
+	Kill      func(pid int, exe string, start uint64) error
+	KillTemp  func(pid int, s *ioc.Set) (string, error)
+	Now       func() time.Time
+	Log       *slog.Logger
+}
+
+// Engine handles Turret requests. It is safe for concurrent use.
+type Engine struct {
+	d    Deps
+	prot atomic.Pointer[safety.Protected]
+
+	mu    sync.Mutex // guards store and orders limiter + firewall + persist
+	store *banStore
+}
+
+// New validates deps, loads persisted bans, prepares the firewall, installs
+// the allow list and re-applies unexpired bans.
+//
+//nolint:gocritic // signature fixed by the Task 6 contract; called once
+func New(d Deps) (*Engine, error) {
+	if d.Keys == nil || d.Replay == nil || d.Protected == nil || d.Limiter == nil || d.FW == nil {
+		return nil, errors.New("engine: Keys, Replay, Protected, Limiter and FW are required")
+	}
+	if d.Cfg.StateDir == "" {
+		return nil, errors.New("engine: state_dir is required")
+	}
+	fillDefaults(&d)
+	if err := os.MkdirAll(d.Cfg.StateDir, 0o700); err != nil {
+		return nil, fmt.Errorf("engine: state dir: %w", err)
+	}
+	now := d.Now()
+	store, err := loadStore(filepath.Join(d.Cfg.StateDir, stateFile), now)
+	if err != nil {
+		return nil, err
+	}
+	e := &Engine{d: d, store: store}
+	e.prot.Store(d.Protected)
+	if err := d.FW.Ensure(); err != nil {
+		return nil, fmt.Errorf("engine: firewall ensure: %w", err)
+	}
+	if err := d.FW.SetAllow(d.Protected.Prefixes()); err != nil {
+		return nil, fmt.Errorf("engine: set allow list: %w", err)
+	}
+	if err := e.reapply(now); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// fillDefaults installs production implementations for unset optional deps.
+func fillDefaults(d *Deps) {
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	if d.Log == nil {
+		d.Log = slog.Default()
+	}
+	if d.IOC == nil {
+		path, keys := d.Cfg.IOCBundlePath, d.Keys
+		d.IOC = func() (*ioc.Set, error) { return ioc.Load(path, keys) }
+	}
+	if d.Kill == nil {
+		d.Kill = proc.Kill
+	}
+	if d.KillTemp == nil {
+		d.KillTemp = func(pid int, s *ioc.Set) (string, error) {
+			return proc.KillTempMalware(pid, s, proc.DefaultTempDirs)
+		}
+	}
+}
+
+// reapply pushes every persisted record back into the firewall.
+func (e *Engine) reapply(now time.Time) error {
+	for _, r := range e.store.sorted() {
+		k, err := parseRecord(r)
+		if err != nil {
+			return err
+		}
+		var ttl time.Duration
+		if k.kind != nft.KindPerm {
+			ttl = time.Unix(r.ExpiresAt, 0).Sub(now)
+			if ttl <= 0 {
+				continue
+			}
+		}
+		if err := e.d.FW.Add(k.kind, k.prefix, ttl); err != nil {
+			return fmt.Errorf("engine: re-apply %s %s: %w", r.Kind, r.Prefix, err)
+		}
+	}
+	return nil
+}
+
+// SetProtected swaps the protected set and refreshes the firewall allow
+// list. The new set is used for overlap checks even if SetAllow fails.
+func (e *Engine) SetProtected(p *safety.Protected) error {
+	if p == nil {
+		return errors.New("engine: nil protected set")
+	}
+	e.prot.Store(p)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.d.FW.SetAllow(p.Prefixes())
+}
+
+// cmd is a request after origin resolution, common to both paths.
+type cmd struct {
+	id     string
+	origin safety.Origin
+	action synapsev1.Action
+	target string
+	ttl    time.Duration
+	pid    int32 // reflex only
+	exe    string
+	start  int64
+	record func() error // replay recording (signed only)
+}
+
+func ttlOf(secs int64) time.Duration {
+	switch {
+	case secs <= 0:
+		return 0
+	case secs >= int64(maxTTL/time.Second):
+		return maxTTL
+	default:
+		return time.Duration(secs) * time.Second
+	}
+}
+
+func originName(o safety.Origin) string {
+	switch o {
+	case safety.OriginReflex:
+		return "reflex"
+	case safety.OriginAutomation:
+		return "automation"
+	case safety.OriginAdmin:
+		return "admin"
+	default:
+		return "unknown"
+	}
+}
+
+// Handle processes one request. It never panics.
+func (e *Engine) Handle(req *synapsev1.TurretRequest) (resp *synapsev1.TurretResponse) {
+	defer func() {
+		if r := recover(); r != nil {
+			e.d.Log.Error("turret handler panic", "panic", fmt.Sprint(r))
+			resp = reply("", synapsev1.TurretResult_TURRET_RESULT_FAILED, "internal error")
+		}
+	}()
+	switch {
+	case req.GetReflex() != nil:
+		return e.handleReflex(req.GetReflex())
+	case req.GetSigned() != nil:
+		return e.handleSigned(req.GetSigned())
+	default:
+		e.d.Log.Warn("turret decision", "origin", "unknown", "result", "FAILED", "reason", "empty request")
+		return reply("", synapsev1.TurretResult_TURRET_RESULT_FAILED, "empty request")
+	}
+}
+
+func reply(id string, r synapsev1.TurretResult, detail string) *synapsev1.TurretResponse {
+	return &synapsev1.TurretResponse{Id: id, Result: r, Detail: detail}
+}
+
+func (e *Engine) handleReflex(r *synapsev1.ReflexRequest) *synapsev1.TurretResponse {
+	c := &cmd{
+		id:     r.GetRequestId(),
+		origin: safety.OriginReflex,
+		action: r.GetAction(),
+		target: r.GetTarget(),
+		ttl:    ttlOf(r.GetTtlSeconds()),
+		pid:    r.GetPid(),
+	}
+	return e.finish(c, e.dispatch(c))
+}
+
+func (e *Engine) handleSigned(sc *synapsev1.SignedCommand) *synapsev1.TurretResponse {
+	v, err := e.d.Keys.Verify(sc, e.d.Cfg.AgentID, e.d.Now())
+	if err != nil {
+		e.d.Log.Warn("turret decision", "origin", "unverified", "result", "REFUSED_SIGNATURE", "reason", err.Error())
+		return reply("", synapsev1.TurretResult_TURRET_RESULT_REFUSED_SIGNATURE, err.Error())
+	}
+	p := v.Payload
+	if p.GetCommandId() == "" {
+		e.d.Log.Warn("turret decision", "origin", "unverified", "result", "REFUSED_SIGNATURE", "reason", "missing command_id")
+		return reply("", synapsev1.TurretResult_TURRET_RESULT_REFUSED_SIGNATURE, "missing command_id")
+	}
+	id, exp := p.GetCommandId(), time.Unix(p.GetExpiresAt(), 0)
+	c := &cmd{
+		id:     id,
+		origin: safety.OriginFor(v.Class),
+		action: p.GetAction(),
+		target: p.GetTarget(),
+		ttl:    ttlOf(p.GetTtlSeconds()),
+		exe:    p.GetTargetExec(),
+		start:  p.GetTargetStartTime(),
+		record: func() error { return e.d.Replay.Record(id, exp) },
+	}
+	return e.finish(c, e.dispatch(c))
+}
+
+type outcome struct {
+	result synapsev1.TurretResult
+	detail string
+}
+
+func refused(format string, args ...any) outcome {
+	return outcome{synapsev1.TurretResult_TURRET_RESULT_REFUSED_SAFETY, fmt.Sprintf(format, args...)}
+}
+
+func failed(format string, args ...any) outcome {
+	return outcome{synapsev1.TurretResult_TURRET_RESULT_FAILED, fmt.Sprintf(format, args...)}
+}
+
+func applied(format string, args ...any) outcome {
+	return outcome{synapsev1.TurretResult_TURRET_RESULT_APPLIED, fmt.Sprintf(format, args...)}
+}
+
+func (e *Engine) finish(c *cmd, o outcome) *synapsev1.TurretResponse {
+	lvl := slog.LevelInfo
+	if o.result != synapsev1.TurretResult_TURRET_RESULT_APPLIED {
+		lvl = slog.LevelWarn
+	}
+	e.d.Log.Log(context.Background(), lvl, "turret decision",
+		"origin", originName(c.origin), "action", c.action.String(), "target", c.target,
+		"id", c.id, "result", o.result.String(), "reason", o.detail)
+	return reply(c.id, o.result, o.detail)
+}
+
+// commit records the replay id (signed commands). It runs after all checks
+// and before any side effect, so a crash can never replay an applied command.
+func (e *Engine) commit(c *cmd) (outcome, bool) {
+	if c.record == nil {
+		return outcome{}, true
+	}
+	err := c.record()
+	switch {
+	case err == nil:
+		return outcome{}, true
+	case errors.Is(err, replay.ErrSeen):
+		return outcome{synapsev1.TurretResult_TURRET_RESULT_REFUSED_REPLAY, "command already processed"}, false
+	default:
+		return failed("replay cache: %v", err), false
+	}
+}
+
+func (e *Engine) dispatch(c *cmd) outcome {
+	if d := safety.Check(c.origin, c.action, c.ttl); !d.Allowed {
+		return outcome{d.Result, d.Reason}
+	}
+	switch c.action {
+	case synapsev1.Action_ACTION_BAN_TEMP, synapsev1.Action_ACTION_BAN_PERM,
+		synapsev1.Action_ACTION_RATE_LIMIT, synapsev1.Action_ACTION_UNBAN:
+		return e.netAction(c)
+	case synapsev1.Action_ACTION_KILL_PROCESS, synapsev1.Action_ACTION_KILL_TEMP_MALWARE:
+		return e.killAction(c)
+	default:
+		return failed("not implemented in v0.4.0")
+	}
+}
+
+func isSingle(p netip.Prefix) bool { return p.Bits() == p.Addr().BitLen() }
+
+func (e *Engine) netAction(c *cmd) outcome {
+	prefix, err := safety.ParseNetTarget(c.target, c.origin)
+	if err != nil {
+		return refused("%v", err)
+	}
+	if c.action == synapsev1.Action_ACTION_RATE_LIMIT && !isSingle(prefix) {
+		return refused("rate limit requires a single address")
+	}
+	// UNBAN is allowed to touch protected ranges so stale bans can be lifted.
+	if c.action != synapsev1.Action_ACTION_UNBAN {
+		if hit, bad := e.prot.Load().Overlaps(prefix); bad {
+			return refused("target %s overlaps protected range %s", prefix, hit)
+		}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if c.action == synapsev1.Action_ACTION_UNBAN && e.store.hasPerm(prefix) && c.origin != safety.OriginAdmin {
+		return refused("permanent ban requires admin to lift")
+	}
+	if o, ok := e.commit(c); !ok {
+		return o
+	}
+	if c.action == synapsev1.Action_ACTION_UNBAN {
+		return e.unban(prefix)
+	}
+	if c.origin == safety.OriginReflex {
+		var ok bool
+		if prefix, ok = e.admitReflex(prefix, c.action); !ok {
+			return outcome{synapsev1.TurretResult_TURRET_RESULT_REFUSED_BUDGET, "reflex budget exhausted"}
+		}
+	}
+	return e.ban(c, prefix)
+}
+
+// admitReflex runs the reflex limiter and returns the prefix to act on. A
+// widened prefix that touches a protected range falls back to the single
+// address (already checked). Rate limits always act on the single address.
+func (e *Engine) admitReflex(single netip.Prefix, a synapsev1.Action) (netip.Prefix, bool) {
+	p, ok := e.d.Limiter.Admit(single.Addr())
+	if !ok {
+		return netip.Prefix{}, false
+	}
+	if a == synapsev1.Action_ACTION_RATE_LIMIT || p == single {
+		return single, true
+	}
+	if _, bad := e.prot.Load().Overlaps(p); bad {
+		return single, true
+	}
+	return p, true
+}
+
+func expiryUnix(now time.Time, ttl time.Duration) int64 {
+	t := now.Add(ttl)
+	exp := t.Unix()
+	if t.Nanosecond() > 0 {
+		exp++ // round up: never shorten
+	}
+	return exp
+}
+
+// ban applies and persists a ban; e.mu is held.
+func (e *Engine) ban(c *cmd, p netip.Prefix) outcome {
+	var kind nft.Kind
+	switch c.action {
+	case synapsev1.Action_ACTION_BAN_PERM:
+		kind = nft.KindPerm
+	case synapsev1.Action_ACTION_RATE_LIMIT:
+		kind = nft.KindRateLimit
+	default:
+		kind = nft.KindBan
+	}
+	ttl := c.ttl
+	if kind == nft.KindPerm {
+		ttl = 0
+	}
+	now := e.d.Now()
+	if err := e.d.FW.Add(kind, p, ttl); err != nil {
+		return failed("firewall: %v", err)
+	}
+	var exp int64
+	if kind != nft.KindPerm {
+		exp = expiryUnix(now, ttl)
+	}
+	e.store.put(recKey{p, kind}, exp)
+	if err := e.store.persist(); err != nil {
+		e.d.Log.Error("persist ban state", "err", err)
+		return applied("%s %s applied; state not persisted: %v", kind, p, err)
+	}
+	return applied("%s %s", kind, p)
+}
+
+// unban removes p from the firewall and the state; e.mu is held.
+func (e *Engine) unban(p netip.Prefix) outcome {
+	if err := e.d.FW.Remove(p); err != nil {
+		return failed("firewall: %v", err)
+	}
+	e.store.deletePrefix(p)
+	if err := e.store.persist(); err != nil {
+		e.d.Log.Error("persist ban state", "err", err)
+		return applied("unban %s applied; state not persisted: %v", p, err)
+	}
+	return applied("unban %s", p)
+}
+
+func (e *Engine) killAction(c *cmd) outcome {
+	pid := int(c.pid)
+	if c.origin != safety.OriginReflex {
+		var err error
+		if pid, err = safety.ParsePIDTarget(c.target); err != nil {
+			return refused("%v", err)
+		}
+	} else if pid <= 1 {
+		return refused("invalid pid %d", pid)
+	}
+	if c.action == synapsev1.Action_ACTION_KILL_PROCESS && c.start < 0 {
+		return refused("invalid target_start_time")
+	}
+	if o, ok := e.commit(c); !ok {
+		return o
+	}
+	if c.action == synapsev1.Action_ACTION_KILL_PROCESS {
+		if err := e.d.Kill(pid, c.exe, uint64(c.start)); err != nil { //nolint:gosec // checked >= 0 above
+			return killErr(err)
+		}
+		return applied("killed pid %d", pid)
+	}
+	set, err := e.d.IOC()
+	if err != nil {
+		return failed("ioc bundle: %v", err)
+	}
+	path, err := e.d.KillTemp(pid, set)
+	if err != nil {
+		return killErr(err)
+	}
+	return applied("killed pid %d (%s)", pid, path)
+}
+
+func killErr(err error) outcome {
+	for _, safe := range []error{proc.ErrImmune, proc.ErrNotTempPath, proc.ErrNotInIOC, proc.ErrMemfdOrDeleted, proc.ErrMismatch} {
+		if errors.Is(err, safe) {
+			return refused("%v", err)
+		}
+	}
+	return failed("kill: %v", err)
+}
