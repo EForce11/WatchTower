@@ -256,6 +256,49 @@ func TestRefreshProtectedRetriesFailedApply(t *testing.T) {
 	}
 }
 
+// A failed allow-list apply is retried after protectedRetryMin, not after a
+// full refresh interval.
+func TestRefreshProtectedRetriesFailedApplySoon(t *testing.T) {
+	mk := func(a string) *safety.Protected {
+		p, err := safety.Discover(testCfg(), safety.Sources{
+			InterfaceAddrs: func() ([]netip.Prefix, error) { return []netip.Prefix{netip.MustParsePrefix(a)}, nil },
+			RouteFiles:     [2]string{"/nonexistent4", "/nonexistent6"},
+			ResolvConf:     "/nonexistent",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	prev := protectedRetryMin
+	protectedRetryMin = 5 * time.Millisecond
+	t.Cleanup(func() { protectedRetryMin = prev })
+
+	const interval = 400 * time.Millisecond
+	old, next := mk("10.1.0.5/24"), mk("10.2.0.5/24")
+	set := &flakySetter{ok: make(chan struct{}, 1)}
+	stop := make(chan struct{})
+	finished := make(chan struct{})
+	start := time.Now()
+	go func() {
+		refreshProtected(stop, interval, old, func() (*safety.Protected, error) { return next, nil }, set, discardLogger())
+		close(finished)
+	}()
+	select {
+	case <-set.ok:
+	case <-time.After(5 * time.Second):
+		t.Fatal("failed SetProtected was never retried")
+	}
+	elapsed := time.Since(start)
+	close(stop)
+	<-finished
+	// First attempt at ~interval, retry ~5 ms later; without the fast retry
+	// the second attempt would come at ~2×interval.
+	if elapsed >= interval+interval/2 {
+		t.Fatalf("retry took %v, want well under %v", elapsed, 2*interval)
+	}
+}
+
 func TestPanicFlushClearStateMovesBans(t *testing.T) {
 	stubFlush(t, func() error { return nil })
 	dir := t.TempDir()
