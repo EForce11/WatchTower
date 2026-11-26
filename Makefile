@@ -56,9 +56,11 @@ test:
 test-rules:
 	go test ./internal/rules/
 
-# Run nftables netns tests (unprivileged: user + network namespace)
+# Run nftables netns tests (unprivileged: user + network namespace). -p 1:
+# both packages share the namespace and the one watchtower table (the smoke
+# test's panic-flush deletes it), so they must not run concurrently.
 test-netns:
-	unshare --user --map-root-user --net env GOPROXY=off GOFLAGS=-mod=readonly go test -tags netns -race ./internal/turret/nft/ ./cmd/wt-turret/
+	unshare --user --map-root-user --net env GOPROXY=off GOFLAGS=-mod=readonly go test -p 1 -tags netns -race ./internal/turret/nft/ ./cmd/wt-turret/
 
 # Run integration test only
 integration-test:
