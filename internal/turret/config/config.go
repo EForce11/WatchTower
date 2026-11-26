@@ -144,7 +144,7 @@ func Load(path string) (Config, error) {
 }
 
 // Validate checks the configuration for usability.
-func (c Config) Validate() error {
+func (c Config) Validate() error { //nolint:gocritic // value receiver is the specified API
 	if c.AgentID == "" {
 		return errors.New("turret config: agent_id is required")
 	}
