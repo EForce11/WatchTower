@@ -89,6 +89,9 @@ type Firewall interface {
 	Remove(p netip.Prefix) error
 	// Flush deletes table inet watchtower. A missing table is not an error.
 	Flush() error
+	// Close releases background resources (the expiry timer). The table and
+	// its contents are left in place.
+	Close() error
 }
 
 // normalize returns p masked, without zone, with IPv4-mapped IPv6 prefixes
@@ -345,3 +348,6 @@ func (f *Fake) Flush() error {
 	f.allow = nil
 	return nil
 }
+
+// Close is a no-op.
+func (f *Fake) Close() error { return nil }

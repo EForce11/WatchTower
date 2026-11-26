@@ -93,7 +93,7 @@ func newFW(t *testing.T) Firewall {
 	if err != nil {
 		t.Fatalf("NewNFT: %v", err)
 	}
-	t.Cleanup(func() { _ = fw.Flush() })
+	t.Cleanup(func() { _ = fw.Flush(); _ = fw.Close() })
 	return fw
 }
 
@@ -573,7 +573,31 @@ func TestTimeoutExpires(t *testing.T) {
 	if !hasStart(t, "ban4", a) {
 		t.Fatal("ban not present after Add")
 	}
-	eventually(t, 6*time.Second, "ban to expire", func() bool { return !hasStart(t, "ban4", a) })
+	// The kernel timeout is a backstop (ttl + margin)...
+	if e := expiresOf(t, "ban4", a); e <= 2*time.Second+expiryMargin-time.Second || e > 2*time.Second+expiryMargin {
+		t.Fatalf("kernel timeout = %v, want ~%v", e, 2*time.Second+expiryMargin)
+	}
+	// ...the element is removed by Turret's own rewrite at the deadline,
+	// well before the kernel would expire it.
+	eventually(t, 2*time.Second+time.Second, "ban to expire", func() bool { return !hasStart(t, "ban4", a) })
+}
+
+func TestCloseStopsExpiryRewrite(t *testing.T) {
+	fw := ensured(t)
+	a := netip.MustParseAddr("198.51.100.21")
+	if err := fw.Add(KindBan, netip.PrefixFrom(a, 32), time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err := fw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Second)
+	if !hasStart(t, "ban4", a) {
+		t.Fatal("element removed after Close (only the kernel backstop should expire it)")
+	}
+	if err := fw.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
 }
 
 func TestFlushRestoresConnectivity(t *testing.T) {
@@ -708,6 +732,7 @@ func TestEnsureImportsExistingContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = fw2.Close() })
 	if err := fw2.Ensure(); err != nil {
 		t.Fatal(err)
 	}
@@ -756,6 +781,9 @@ func TestAddNeverShortensTimeout(t *testing.T) {
 	one := netip.MustParsePrefix("192.0.2.1/32")
 	if err := fw.Add(KindBan, one, 10*time.Second); err != nil {
 		t.Fatal(err)
+	}
+	if e := expiresOf(t, "ban4", one.Addr()); e < 10*time.Second || e > 10*time.Second+expiryMargin {
+		t.Fatalf("timeout %v, want 10s plus at most the %v margin", e, expiryMargin)
 	}
 	if err := fw.Add(KindBan, one, time.Hour); err != nil {
 		t.Fatalf("extend: %v", err)
@@ -904,6 +932,7 @@ func restarted(t *testing.T) Firewall {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = fw.Close() })
 	if err := fw.Ensure(); err != nil {
 		t.Fatal(err)
 	}

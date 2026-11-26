@@ -211,10 +211,11 @@ func (rs recordSet) segments(now time.Time) []segment {
 	return out
 }
 
-// timeoutFor converts a deadline to a kernel element timeout (0 = none).
+// timeoutFor converts a deadline to a kernel element timeout (0 = none),
+// including expiryMargin: Turret's expiry rewrite removes the element first.
 func timeoutFor(deadline, now time.Time) time.Duration {
 	if deadline.IsZero() {
 		return 0
 	}
-	return max(deadline.Sub(now), time.Millisecond)
+	return max(deadline.Sub(now), time.Millisecond) + expiryMargin
 }

@@ -70,10 +70,23 @@ func setName(base string, v6 bool) string {
 	return base + "4"
 }
 
+// expiryMargin is added to every kernel element timeout. While Turret runs,
+// the expiry timer (see schedule) rewrites a set at the earliest record
+// deadline, so the kernel never expires an element itself: kernel GC of an
+// interval element adjacent to another one is not something to depend on.
+// The kernel timeout stays as a backstop when Turret is down, so a ban lasts
+// at most expiryMargin longer than requested and never shorter.
+const expiryMargin = 5 * time.Second
+
+// expiryRetry is how soon a failed expiry rewrite is retried.
+const expiryRetry = time.Second
+
 type nftFW struct {
-	mu   sync.Mutex // serializes read-modify-write sequences
-	now  func() time.Time
-	recs map[string]*recordSet // set name -> requested entries; nil until loaded
+	mu     sync.Mutex // serializes read-modify-write sequences; guards all fields
+	now    func() time.Time
+	recs   map[string]*recordSet // set name -> requested entries; nil until loaded
+	timer  *time.Timer           // fires at the earliest record deadline; nil if none
+	closed bool
 }
 
 // NewNFT returns the nftables-backed Firewall. It verifies that the kernel
@@ -126,7 +139,12 @@ func (f *nftFW) Ensure() error {
 			return err
 		}
 		if ok {
-			return f.load(c, t) // keep contents, remember them for later rewrites
+			// Keep contents, remember them for later rewrites.
+			if err := f.load(c, t); err != nil {
+				return err
+			}
+			f.schedule()
+			return nil
 		}
 		c.DelTable(t) // same transaction as the re-create below
 	}
@@ -139,6 +157,7 @@ func (f *nftFW) Ensure() error {
 	for _, sp := range setSpecs {
 		f.recs[sp.name] = &recordSet{}
 	}
+	f.schedule()
 	return nil
 }
 
@@ -293,6 +312,7 @@ func (f *nftFW) Flush() error {
 	}
 	c.DelTable(t)
 	f.recs = nil
+	f.schedule()
 	if err := c.Flush(); err != nil && !errors.Is(err, unix.ENOENT) {
 		return err
 	}
@@ -343,11 +363,14 @@ func (f *nftFW) load(c *nftables.Conn, t *nftables.Table) error {
 			return err
 		}
 		rs := &recordSet{}
+		// The kernel timeout carries expiryMargin on top of the requested
+		// deadline; an element left only with its margin is already due and
+		// is pruned by the first rewrite.
 		deadline := func(e time.Duration) time.Time {
 			if !sp.timeout {
 				return time.Time{}
 			}
-			return now.Add(e)
+			return now.Add(e - expiryMargin)
 		}
 		if s.Interval {
 			spans, err := parseSpans(el)
@@ -433,6 +456,7 @@ func (f *nftFW) queueRewrite(c *nftables.Conn, t *nftables.Table, name string) e
 func (f *nftFW) Replace(entries []Entry) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	defer f.schedule()
 	es, err := validateEntries(entries, f.now())
 	if err != nil {
 		return err
@@ -484,6 +508,7 @@ func (f *nftFW) Add(k Kind, p netip.Prefix, ttl time.Duration) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	defer f.schedule()
 	c, err := nftables.New()
 	if err != nil {
 		return err
@@ -516,6 +541,7 @@ func (f *nftFW) Remove(p netip.Prefix) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	defer f.schedule()
 	c, err := nftables.New()
 	if err != nil {
 		return err
@@ -608,4 +634,116 @@ func (f *nftFW) SetAllow(ps []netip.Prefix) error {
 		}
 	}
 	return c.Flush()
+}
+
+// ---- expiry ----------------------------------------------------------------
+
+// Close stops the expiry timer. Elements already in the kernel keep their
+// backstop timeouts. It is safe to call more than once.
+func (f *nftFW) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	f.stopTimer()
+	return nil
+}
+
+func (f *nftFW) stopTimer() {
+	if f.timer != nil {
+		f.timer.Stop()
+		f.timer = nil
+	}
+}
+
+// arm (re)sets the single expiry timer to fire after d; f.mu is held.
+func (f *nftFW) arm(d time.Duration) {
+	if f.closed {
+		return
+	}
+	if f.timer == nil {
+		f.timer = time.AfterFunc(max(d, 0), f.expire)
+		return
+	}
+	f.timer.Reset(max(d, 0))
+}
+
+// schedule points the expiry timer at the earliest live record deadline (or
+// stops it when there is none); f.mu is held.
+func (f *nftFW) schedule() {
+	var next time.Time
+	for _, rs := range f.recs {
+		for i := range *rs {
+			if dl := (*rs)[i].deadline; !dl.IsZero() && (next.IsZero() || dl.Before(next)) {
+				next = dl
+			}
+		}
+	}
+	if next.IsZero() {
+		f.stopTimer()
+		return
+	}
+	f.arm(next.Sub(f.now()))
+}
+
+// expire is the timer callback: it rewrites, in one transaction, every set
+// holding a record whose deadline has passed, then reschedules. It takes
+// f.mu; Close never waits for it, so the two cannot deadlock.
+func (f *nftFW) expire() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed || f.recs == nil {
+		return
+	}
+	if err := f.rewriteExpired(); err != nil {
+		f.arm(expiryRetry)
+		return
+	}
+	f.schedule()
+}
+
+func (f *nftFW) rewriteExpired() error {
+	now := f.now()
+	var due []string
+	for _, sp := range setSpecs {
+		rs := f.recs[sp.name]
+		if !sp.timeout || rs == nil {
+			continue
+		}
+		if slices.ContainsFunc(*rs, func(r record) bool { return !r.live(now) }) {
+			due = append(due, sp.name)
+		}
+	}
+	if len(due) == 0 {
+		return nil
+	}
+	c, err := nftables.New()
+	if err != nil {
+		return err
+	}
+	t, err := findTable(c)
+	if err != nil {
+		return err
+	}
+	if t == nil {
+		return errors.New("nft: table watchtower missing")
+	}
+	old := make(map[string]recordSet, len(due))
+	for _, name := range due {
+		old[name] = slices.Clone(*f.recs[name])
+		if err := f.queueRewrite(c, t, name); err != nil {
+			f.restore(old)
+			return err
+		}
+	}
+	if err := c.Flush(); err != nil {
+		f.restore(old)
+		return err
+	}
+	return nil
+}
+
+func (f *nftFW) restore(old map[string]recordSet) {
+	for name, rs := range old {
+		*f.recs[name] = rs
+	}
 }
