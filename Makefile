@@ -58,7 +58,7 @@ test-rules:
 
 # Run nftables netns tests (unprivileged: user + network namespace)
 test-netns:
-	unshare --user --map-root-user --net go test -tags netns -race ./internal/turret/nft/ ./cmd/wt-turret/
+	unshare --user --map-root-user --net env GOPROXY=off GOFLAGS=-mod=readonly go test -tags netns -race ./internal/turret/nft/ ./cmd/wt-turret/
 
 # Run integration test only
 integration-test:

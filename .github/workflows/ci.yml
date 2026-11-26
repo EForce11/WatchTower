@@ -97,5 +97,13 @@ jobs:
           go-version-file: go.mod
       - name: Allow unprivileged user namespaces (Ubuntu 24.04 restricts them)
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      # The namespace has no network: fetch modules and the toolchain first.
+      - name: Prefetch modules and toolchain (outside the namespace)
+        run: |
+          go mod download
+          go build ./...
+          go vet -tags netns ./internal/turret/nft/ ./cmd/wt-turret/
+      - name: Load nf_tables
+        run: sudo modprobe nf_tables || true
       - name: nftables netns tests
         run: make test-netns
