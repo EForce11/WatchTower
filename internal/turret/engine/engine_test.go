@@ -602,6 +602,71 @@ func TestSetProtected(t *testing.T) {
 	}
 }
 
+// TestBanNotAppliedAfterProtectedRefresh interleaves a ban with a refresh
+// that protects its target: the ban must either be refused or be applied
+// while the old protected set is still installed, never after the new one.
+func TestBanNotAppliedAfterProtectedRefresh(t *testing.T) {
+	e := newEnv(t)
+	const target = "203.0.113.90"
+	old := e.eng.prot.Load()
+	newSet := testProtectedWith(t, &e.deps.Cfg, target)
+
+	gate := make(chan struct{})
+	blocked := make(chan struct{})
+	var once sync.Once
+	var lateBan atomic.Bool
+	e.fw.OnCall(func(c nft.Call) {
+		if c.Op != "Add" {
+			return
+		}
+		if c.P.Addr() == netip.MustParseAddr("198.51.100.1") {
+			once.Do(func() { close(blocked) })
+			<-gate // hold request A inside the firewall
+			return
+		}
+		if c.P.Contains(netip.MustParseAddr(target)) && e.eng.prot.Load() != old {
+			lateBan.Store(true)
+		}
+	})
+
+	var wg sync.WaitGroup
+	res := make(chan synapsev1.TurretResult, 2)
+	wg.Add(1)
+	go func() { // A: an unrelated ban that blocks in Add
+		defer wg.Done()
+		res <- e.eng.Handle(e.auto("a", synapsev1.Action_ACTION_BAN_TEMP, "198.51.100.1", 60)).GetResult()
+	}()
+	<-blocked
+	var bRes synapsev1.TurretResult
+	wg.Add(2)
+	go func() { // B: ban of the target, issued while the old set is current
+		defer wg.Done()
+		bRes = e.eng.Handle(e.auto("b", synapsev1.Action_ACTION_BAN_TEMP, target, 60)).GetResult()
+	}()
+	time.Sleep(50 * time.Millisecond) // let B reach its protected check
+	go func() {                       // the refresh that adds the target's range
+		defer wg.Done()
+		if err := e.eng.SetProtected(newSet); err != nil {
+			t.Error(err)
+		}
+	}()
+	time.Sleep(50 * time.Millisecond)
+	close(gate)
+	wg.Wait()
+	if r := <-res; r != okRes {
+		t.Fatalf("request A = %s", r)
+	}
+	if lateBan.Load() {
+		t.Fatal("ban of a protected target applied after the refresh installed the new set")
+	}
+	if bRes != okRes && bRes != safetyRef {
+		t.Fatalf("request B = %s", bRes)
+	}
+	if bRes == safetyRef && e.fw.Blocked(nft.KindBan, netip.MustParseAddr(target)) {
+		t.Fatal("refused ban is in the firewall")
+	}
+}
+
 func TestHandleNeverPanics(t *testing.T) {
 	e := newEnv(t)
 	for name, req := range map[string]*synapsev1.TurretRequest{
