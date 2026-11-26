@@ -170,7 +170,9 @@ type protectedSetter interface {
 // when its prefixes changed. A discover error keeps the old set.
 func refreshProtected(stop <-chan struct{}, interval time.Duration, cur *safety.Protected,
 	discover func() (*safety.Protected, error), set protectedSetter, log *slog.Logger) {
-	t := time.NewTicker(interval)
+	wait := interval
+	retry := protectedRetryMin
+	t := time.NewTimer(wait)
 	defer t.Stop()
 	for {
 		select {
@@ -178,24 +180,36 @@ func refreshProtected(stop <-chan struct{}, interval time.Duration, cur *safety.
 			return
 		case <-t.C:
 		}
+		wait = interval
 		next, err := discover()
-		if err != nil {
+		switch {
+		case err != nil:
 			log.Error("protected set refresh failed; keeping previous set", "err", err)
-			continue
+		case slices.Equal(next.Prefixes(), cur.Prefixes()):
+			retry = protectedRetryMin
+		default:
+			if err := set.SetProtected(next); err != nil {
+				// The engine already uses the new (stricter) set for overlap
+				// checks, but the kernel allow list is stale, so a newly
+				// protected address may still hit an existing ban. Keep cur
+				// and retry soon with backoff instead of waiting a full
+				// interval.
+				log.Error("applying protected set failed; retrying", "err", err, "in", retry)
+				wait = retry
+				retry = min(retry*2, interval)
+				break
+			}
+			cur = next
+			retry = protectedRetryMin
+			log.Info("protected set updated", "prefixes", fmt.Sprint(next.Prefixes()))
 		}
-		if slices.Equal(next.Prefixes(), cur.Prefixes()) {
-			continue
-		}
-		if err := set.SetProtected(next); err != nil {
-			// Keep cur so the next tick retries: the engine already uses
-			// the new set for overlap checks, but the allow list is stale.
-			log.Error("applying protected set failed; will retry", "err", err)
-			continue
-		}
-		cur = next
-		log.Info("protected set updated", "prefixes", fmt.Sprint(next.Prefixes()))
+		t.Reset(wait)
 	}
 }
+
+// protectedRetryMin is the first retry delay after a failed allow-list
+// update; it doubles up to the refresh interval. A variable for tests.
+var protectedRetryMin = time.Second
 
 func serve(args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
