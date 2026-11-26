@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -38,7 +39,7 @@ func newFixture(t *testing.T) fixture {
 	cfg := config.Config{
 		CoreEndpoint:  "192.0.2.10:7443",
 		WireGuardCIDR: "10.8.0.0/24",
-		WhitelistFile: write(t, d, "whitelist.txt", "# mgmt\n203.0.113.50\n\n198.51.100.0/24 # office\n2001:db8:aaaa::/48\n"),
+		WhitelistFile: write(t, d, "whitelist.txt", "# mgmt\n203.0.113.50\n\n198.51.100.0/24 # office\n::ffff:192.0.2.0/120\n2001:db8:aaaa::/48\n"),
 	}
 	src := Sources{
 		InterfaceAddrs: func() ([]netip.Prefix, error) {
@@ -60,7 +61,7 @@ func TestDiscoverProtects(t *testing.T) {
 		"127.0.0.1/32", "::1/128", "169.254.1.1/32", "fe80::5/128", // hardcoded
 		"192.168.1.23/32",                                 // interface address
 		"192.168.1.1/32",                                  // v4 default gateway
-		"fe80::1/128",                                     // v6 default gateway
+		"2001:db8:ffff::1/128",                            // v6 default gateway (global, not hardcoded)
 		"9.9.9.9/32", "2620:fe::fe/128", "2620:fe::9/128", // resolvers
 		"192.0.2.10/32",        // core endpoint
 		"10.8.0.77/32",         // wireguard
@@ -71,6 +72,13 @@ func TestDiscoverProtects(t *testing.T) {
 		if _, hit := p.Overlaps(netip.MustParsePrefix(s)); !hit {
 			t.Errorf("%s should be protected", s)
 		}
+	}
+	// A mapped whitelist CIDR is stored as its IPv4 form and protects it.
+	if !slices.Contains(p.Prefixes(), netip.MustParsePrefix("192.0.2.0/24")) {
+		t.Error("mapped whitelist CIDR not normalised to 192.0.2.0/24")
+	}
+	if _, hit := p.Overlaps(netip.MustParsePrefix("192.0.2.77/32")); !hit {
+		t.Error("192.0.2.77 must be protected by the mapped whitelist CIDR")
 	}
 }
 
