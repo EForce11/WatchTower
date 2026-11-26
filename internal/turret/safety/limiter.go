@@ -67,8 +67,10 @@ func (r *ReflexLimiter) Admit(ip netip.Addr, mayWiden func(netip.Prefix) bool) (
 	}
 	single := netip.PrefixFrom(ip, ip.BitLen())
 
-	// Already covered by an admitted prefix ban: no extra budget.
-	if _, ok := r.admitted[group]; ok {
+	// Already covered by an admitted prefix ban: no extra budget, provided
+	// the prefix is still allowed to be applied (the protected set may have
+	// changed since); otherwise fall back to the budgeted single address.
+	if _, ok := r.admitted[group]; ok && mayWiden != nil && mayWiden(group) {
 		return group, true
 	}
 

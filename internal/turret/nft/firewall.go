@@ -36,6 +36,38 @@ func (k Kind) String() string {
 	}
 }
 
+// Entry is one ban record handed to Firewall.Replace.
+type Entry struct {
+	Kind     Kind
+	Prefix   netip.Prefix
+	Deadline time.Time // zero = permanent (KindPerm only)
+}
+
+// validateEntries normalizes and checks entries, dropping expired ones.
+func validateEntries(entries []Entry, now time.Time) ([]Entry, error) {
+	out := make([]Entry, 0, len(entries))
+	for _, e := range entries {
+		ttl := time.Hour // placeholder positive ttl: the deadline is explicit
+		np, err := validateAdd(e.Kind, e.Prefix, ttl)
+		if err != nil {
+			return nil, err
+		}
+		if e.Kind == KindPerm {
+			e.Deadline = time.Time{}
+		} else {
+			if e.Deadline.IsZero() {
+				return nil, fmt.Errorf("nft: %s entry %s needs a deadline", e.Kind, np)
+			}
+			if !e.Deadline.After(now) {
+				continue
+			}
+		}
+		e.Prefix = np
+		out = append(out, e)
+	}
+	return out, nil
+}
+
 // Firewall is the enforcement surface the Turret engine drives.
 type Firewall interface {
 	// Ensure creates table/sets/chain if missing and keeps the contents of an
@@ -48,6 +80,10 @@ type Firewall interface {
 	// be positive otherwise. KindRateLimit requires a single address. Adding
 	// a prefix that is already present refreshes it.
 	Add(k Kind, p netip.Prefix, ttl time.Duration) error
+	// Replace makes entries the complete content of the ban, perm and
+	// ratelimit sets (expired entries are skipped) in one transaction; the
+	// allow sets are untouched. The table must exist (Ensure).
+	Replace(entries []Entry) error
 	// Remove deletes exactly p from the ban, perm and ratelimit sets. A
 	// missing entry is not an error.
 	Remove(p netip.Prefix) error
@@ -129,6 +165,26 @@ var _ Firewall = (*Fake)(nil)
 
 // NewFake returns an empty Fake using the wall clock.
 func NewFake() *Fake { return NewFakeAt(time.Now) }
+
+// NewFakeFrom returns a Fake whose ban/perm/ratelimit state is what a kernel
+// table left behind by prev would be imported as on restart: the effective
+// coverage, with adjacent equal-deadline entries merged into one interval.
+// It shares prev's clock.
+func NewFakeFrom(prev *Fake) *Fake {
+	prev.mu.Lock()
+	defer prev.mu.Unlock()
+	f := NewFakeAt(prev.now)
+	now := prev.now()
+	for k, rs := range prev.state {
+		var out recordSet
+		for _, seg := range rs.segments(now) {
+			out = append(out, record(seg))
+		}
+		f.state[k] = &out
+	}
+	f.allow = append([]netip.Prefix(nil), prev.allow...)
+	return f
+}
 
 // NewFakeAt returns an empty Fake using the given clock.
 func NewFakeAt(now func() time.Time) *Fake {
@@ -239,6 +295,24 @@ func (f *Fake) Add(k Kind, p netip.Prefix, ttl time.Duration) error {
 	rs := f.records(k)
 	rs.prune(f.now())
 	rs.add(prefixSpan(np), deadline)
+	return nil
+}
+
+// Replace swaps the ban/perm/ratelimit state for exactly entries.
+func (f *Fake) Replace(entries []Entry) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.begin(Call{Op: "Replace"}); err != nil {
+		return err
+	}
+	es, err := validateEntries(entries, f.now())
+	if err != nil {
+		return err
+	}
+	f.state = map[Kind]*recordSet{}
+	for _, e := range es {
+		f.records(e.Kind).add(prefixSpan(e.Prefix), e.Deadline)
+	}
 	return nil
 }
 

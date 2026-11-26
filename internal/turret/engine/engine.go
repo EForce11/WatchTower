@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -53,9 +54,54 @@ type Engine struct {
 	d    Deps
 	prot atomic.Pointer[safety.Protected]
 
-	mu    sync.Mutex // guards store, dirty and orders limiter + firewall + persist
+	mu    sync.Mutex // guards store and orders limiter + firewall + persist
 	store *banStore
-	dirty bool // last persist failed; retried on the next mutation and on Close
+
+	iocMu    sync.Mutex // guards the verified IOC set cache
+	iocSet   *ioc.Set
+	iocStamp fileStamp
+}
+
+// fileStamp identifies a file version cheaply (mtime, size, inode).
+type fileStamp struct {
+	mtime int64
+	size  int64
+	ino   uint64
+}
+
+func stampOf(path string) (fileStamp, bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fileStamp{}, false
+	}
+	st := fileStamp{mtime: fi.ModTime().UnixNano(), size: fi.Size()}
+	if sys, ok := fi.Sys().(*syscall.Stat_t); ok {
+		st.ino = sys.Ino
+	}
+	return st, true
+}
+
+// iocSetCached returns the verified IOC set, re-loading (and re-verifying)
+// only when the bundle file changed, so a flood of KILL_TEMP_MALWARE requests
+// cannot force a signature check per request.
+func (e *Engine) iocSetCached() (*ioc.Set, error) {
+	e.iocMu.Lock()
+	defer e.iocMu.Unlock()
+	st, ok := stampOf(e.d.Cfg.IOCBundlePath)
+	if ok && e.iocSet != nil && st == e.iocStamp {
+		return e.iocSet, nil
+	}
+	set, err := e.d.IOC()
+	if err != nil {
+		e.iocSet = nil
+		return nil, err
+	}
+	if ok {
+		e.iocSet, e.iocStamp = set, st
+	} else {
+		e.iocSet = nil
+	}
+	return set, nil
 }
 
 // New validates deps, loads persisted bans, prepares the firewall, installs
@@ -74,7 +120,10 @@ func New(d Deps) (*Engine, error) {
 		return nil, fmt.Errorf("engine: state dir: %w", err)
 	}
 	now := d.Now()
-	store, err := loadStore(filepath.Join(d.Cfg.StateDir, stateFile), now)
+	statePath := filepath.Join(d.Cfg.StateDir, stateFile)
+	_, statErr := os.Stat(statePath)
+	haveState := statErr == nil
+	store, err := loadStore(statePath, now)
 	if err != nil {
 		return nil, err
 	}
@@ -86,8 +135,12 @@ func New(d Deps) (*Engine, error) {
 	if err := d.FW.SetAllow(d.Protected.Prefixes()); err != nil {
 		return nil, fmt.Errorf("engine: set allow list: %w", err)
 	}
-	if err := e.reapply(now); err != nil {
-		return nil, err
+	// bans.json is authoritative once it exists; without it (first run or
+	// lost state) whatever Ensure imported from the kernel is kept.
+	if haveState {
+		if err := e.replaceFromStore(now); err != nil {
+			return nil, err
+		}
 	}
 	return e, nil
 }
@@ -114,23 +167,26 @@ func fillDefaults(d *Deps) {
 	}
 }
 
-// reapply pushes every persisted record back into the firewall.
-func (e *Engine) reapply(now time.Time) error {
-	for _, r := range e.store.sorted() {
+// replaceFromStore makes the firewall hold exactly the persisted records.
+func (e *Engine) replaceFromStore(now time.Time) error {
+	recs := e.store.sorted()
+	entries := make([]nft.Entry, 0, len(recs))
+	for _, r := range recs {
 		k, err := parseRecord(r)
 		if err != nil {
 			return err
 		}
-		var ttl time.Duration
+		ent := nft.Entry{Kind: k.kind, Prefix: k.prefix}
 		if k.kind != nft.KindPerm {
-			ttl = time.Unix(r.ExpiresAt, 0).Sub(now)
-			if ttl <= 0 {
+			ent.Deadline = time.Unix(r.ExpiresAt, 0)
+			if !ent.Deadline.After(now) {
 				continue
 			}
 		}
-		if err := e.d.FW.Add(k.kind, k.prefix, ttl); err != nil {
-			return fmt.Errorf("engine: re-apply %s %s: %w", r.Kind, r.Prefix, err)
-		}
+		entries = append(entries, ent)
+	}
+	if err := e.d.FW.Replace(entries); err != nil {
+		return fmt.Errorf("engine: restore bans: %w", err)
 	}
 	return nil
 }
@@ -179,12 +235,10 @@ func (e *Engine) Close() error {
 	return e.save()
 }
 
-// save persists the store (pruning expired records); e.mu is held. A
-// failure leaves the dirty flag set so the next save writes the full state.
+// save persists the store (pruning expired records); e.mu is held. Every
+// save writes the full state, so a failed one is repaired by the next.
 func (e *Engine) save() error {
-	err := e.store.persist(e.d.Now())
-	e.dirty = err != nil
-	return err
+	return e.store.persist(e.d.Now())
 }
 
 func originName(o safety.Origin) string {
@@ -473,7 +527,7 @@ func (e *Engine) killAction(c *cmd) outcome {
 		}
 		return applied("killed pid %d", pid)
 	}
-	set, err := e.d.IOC()
+	set, err := e.iocSetCached()
 	if err != nil {
 		return failed("ioc bundle: %v", err)
 	}
