@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Phase 1 (Turret) of the v3.2 architecture.
+
+### Added
+- `wt-turret` root enforcement daemon (`serve`, `panic-flush`, `version`) with a single-instance lock on its state directory
+- Safety layer: self-preservation ranges, minimum ban prefix, overlap refusal, origin rules, reflex budget and per-prefix limiter
+- Signed commands (Ed25519 automation and admin keys) with a persisted replay cache
+- Core-signed IOC bundle and `KILL_TEMP_MALWARE` re-verification of the process binary
+- nftables firewall (`table inet watchtower`) with persisted bans that never shorten, and `panic-flush`
+- Engine and Unix socket server with `SO_PEERCRED` peer checks
+- Network-namespace tests (`make test-netns`), a CI `netns` job, and `test-netns` in `make verify` when user namespaces are available
+
+### Changed
+- `wt-turret` added to the GoReleaser builds
+- Phase 1 defers `ISOLATE_HOST` / `RELEASE_HOST` and WebAuthn signatures
+
 ---
 
 ## [0.3.0] — 2026-11-25
