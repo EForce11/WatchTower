@@ -103,6 +103,8 @@ jobs:
           go mod download
           go build ./...
           go vet -tags netns ./internal/turret/nft/ ./cmd/wt-turret/
+      - name: Kernel version
+        run: uname -r
       - name: Load nf_tables
         run: sudo modprobe nf_tables || true
       - name: nftables netns tests
