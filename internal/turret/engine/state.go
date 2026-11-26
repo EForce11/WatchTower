@@ -69,7 +69,7 @@ func loadStore(path string, now time.Time) (*banStore, error) {
 		s.put(k, r.ExpiresAt)
 	}
 	if pruned {
-		if err := s.persist(); err != nil {
+		if err := s.persist(now); err != nil {
 			return nil, err
 		}
 	}
@@ -131,8 +131,19 @@ func (s *banStore) sorted() []BanRecord {
 	return out
 }
 
-// persist writes the store atomically (temp file, fsync, rename).
-func (s *banStore) persist() error {
+// pruneExpired drops timed records that expired at or before now.
+func (s *banStore) pruneExpired(now time.Time) {
+	for k, exp := range s.recs {
+		if exp != 0 && exp <= now.Unix() {
+			delete(s.recs, k)
+		}
+	}
+}
+
+// persist prunes expired records and writes the store atomically (temp
+// file, fsync, rename).
+func (s *banStore) persist(now time.Time) error {
+	s.pruneExpired(now)
 	b, err := json.Marshal(s.sorted())
 	if err != nil {
 		return fmt.Errorf("encode ban state: %w", err)

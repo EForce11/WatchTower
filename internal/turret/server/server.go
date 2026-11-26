@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -35,6 +36,8 @@ type Server struct {
 	h       Handler
 	log     *slog.Logger
 	slots   chan struct{}
+	accept  func() (*net.UnixConn, error) // test seam; defaults to ln.AcceptUnix
+	sleep   func(time.Duration)           // test seam; defaults to time.Sleep
 
 	mu    sync.Mutex
 	conns map[*net.UnixConn]struct{}
@@ -54,6 +57,9 @@ func New(path string, gid int, allowed []int, h Handler, log *slog.Logger) (*Ser
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode().Type() != os.ModeSocket {
 			return nil, fmt.Errorf("server: %s exists and is not a socket", path)
+		}
+		if err := checkStale(path); err != nil {
+			return nil, err
 		}
 		if err := os.Remove(path); err != nil {
 			return nil, fmt.Errorf("server: remove stale socket: %w", err)
@@ -82,11 +88,50 @@ func New(path string, gid int, allowed []int, h Handler, log *slog.Logger) (*Ser
 	for _, u := range allowed {
 		set[u] = struct{}{}
 	}
-	return &Server{
+	srv := &Server{
 		path: path, ln: ln, allowed: set, h: h, log: log,
 		slots: make(chan struct{}, MaxConns),
 		conns: map[*net.UnixConn]struct{}{},
-	}, nil
+		sleep: time.Sleep,
+	}
+	srv.accept = ln.AcceptUnix
+	return srv, nil
+}
+
+// checkStale refuses to touch a socket that something is still listening on.
+func checkStale(path string) error {
+	c, err := net.DialTimeout("unix", path, time.Second)
+	if err == nil {
+		_ = c.Close()
+		return errors.New("server: turret already running (socket is live)")
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return fmt.Errorf("server: probe existing socket %s: %w", path, err)
+}
+
+// nextBackoff doubles the accept retry delay from 5 ms up to 1 s.
+func nextBackoff(d time.Duration) time.Duration {
+	if d < 5*time.Millisecond {
+		return 5 * time.Millisecond
+	}
+	return min(2*d, time.Second)
+}
+
+// isTransient reports accept errors worth retrying (resource exhaustion,
+// aborted connections) as opposed to a closed listener.
+func isTransient(err error) bool {
+	if errors.Is(err, net.ErrClosed) {
+		return false
+	}
+	for _, e := range []error{syscall.EMFILE, syscall.ENFILE, syscall.ECONNABORTED, syscall.ENOBUFS, syscall.ENOMEM, syscall.EINTR} {
+		if errors.Is(err, e) {
+			return true
+		}
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 // Serve accepts connections until ctx is done, then closes the listener and
@@ -100,14 +145,23 @@ func (s *Server) Serve(ctx context.Context) error {
 		s.closeAll()
 	}()
 	var serveErr error
+	var backoff time.Duration
 	for {
-		c, err := s.ln.AcceptUnix()
+		c, err := s.accept()
 		if err != nil {
-			if ctx.Err() == nil && !errors.Is(err, net.ErrClosed) {
-				serveErr = fmt.Errorf("server: accept: %w", err)
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+				break
 			}
+			if isTransient(err) {
+				backoff = nextBackoff(backoff)
+				s.log.Warn("turret accept failed; retrying", "err", err, "backoff", backoff)
+				s.sleep(backoff)
+				continue
+			}
+			serveErr = fmt.Errorf("server: accept: %w", err)
 			break
 		}
+		backoff = 0
 		select {
 		case s.slots <- struct{}{}:
 		default:

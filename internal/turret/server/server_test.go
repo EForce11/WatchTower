@@ -9,6 +9,9 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -219,5 +222,78 @@ func TestStaleSocketReplacedButNotRegularFile(t *testing.T) {
 	}
 	if _, err := New(filepath.Join(dir, "y.sock"), -1, nil, nil, quiet); err == nil {
 		t.Fatal("nil handler accepted")
+	}
+}
+
+func TestLiveSocketNotReplaced(t *testing.T) {
+	s := start(t, []int{os.Getuid()})
+	_, err := New(s.path, -1, []int{os.Getuid()}, echo, quiet)
+	if err == nil || !strings.Contains(err.Error(), "turret already running") {
+		t.Fatalf("err = %v", err)
+	}
+	// The running server is untouched.
+	c := dial(t, s.path)
+	if r, err := roundTrip(t, c, "still"); err != nil || r.GetId() != "still" {
+		t.Fatalf("resp = %v err = %v", r, err)
+	}
+}
+
+func TestAcceptRetriesTransientErrors(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.sock")
+	srv, err := New(path, -1, []int{os.Getuid()}, echo, quiet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fails atomic.Int32
+	accept := srv.accept
+	srv.accept = func() (*net.UnixConn, error) {
+		if fails.Add(1) <= 3 {
+			return nil, &net.OpError{Op: "accept", Err: syscall.EMFILE}
+		}
+		return accept()
+	}
+	srv.sleep = func(time.Duration) {}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(ctx) }()
+	c := dial(t, path)
+	if r, err := roundTrip(t, c, "after-emfile"); err != nil || r.GetId() != "after-emfile" {
+		t.Fatalf("resp = %v err = %v", r, err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Serve: %v", err)
+	}
+}
+
+func TestAcceptFatalErrorEndsServe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "t.sock")
+	srv, err := New(path, -1, nil, echo, quiet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.accept = func() (*net.UnixConn, error) { return nil, errors.New("fatal") }
+	if err := srv.Serve(context.Background()); err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestBackoff(t *testing.T) {
+	d := time.Duration(0)
+	seq := make([]time.Duration, 0, 10)
+	for range 10 {
+		d = nextBackoff(d)
+		seq = append(seq, d)
+	}
+	if seq[0] != 5*time.Millisecond || seq[1] != 10*time.Millisecond || seq[len(seq)-1] != time.Second {
+		t.Fatalf("seq = %v", seq)
+	}
+	for _, e := range []error{syscall.EMFILE, syscall.ENFILE, syscall.ECONNABORTED, syscall.ENOBUFS, syscall.ENOMEM} {
+		if !isTransient(&net.OpError{Err: e}) {
+			t.Fatalf("%v not transient", e)
+		}
+	}
+	if isTransient(errors.New("x")) || isTransient(net.ErrClosed) {
+		t.Fatal("misclassified")
 	}
 }

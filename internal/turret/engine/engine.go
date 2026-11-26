@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/EForce11/WatchTower/internal/turret/config"
 	"github.com/EForce11/WatchTower/internal/turret/ioc"
 	"github.com/EForce11/WatchTower/internal/turret/nft"
@@ -25,8 +27,8 @@ import (
 )
 
 // maxTTL clamps client-supplied TTLs so converting seconds to a Duration
-// cannot overflow. Policy limits are far below this.
-const maxTTL = 365 * 24 * time.Hour
+// cannot overflow (the limit is ~292 years). Policy limits are far below it.
+const maxTTL = 100 * 365 * 24 * time.Hour
 
 const stateFile = "bans.json"
 
@@ -51,8 +53,9 @@ type Engine struct {
 	d    Deps
 	prot atomic.Pointer[safety.Protected]
 
-	mu    sync.Mutex // guards store and orders limiter + firewall + persist
+	mu    sync.Mutex // guards store, dirty and orders limiter + firewall + persist
 	store *banStore
+	dirty bool // last persist failed; retried on the next mutation and on Close
 }
 
 // New validates deps, loads persisted bans, prepares the firewall, installs
@@ -146,26 +149,42 @@ func (e *Engine) SetProtected(p *safety.Protected) error {
 
 // cmd is a request after origin resolution, common to both paths.
 type cmd struct {
-	id     string
-	origin safety.Origin
-	action synapsev1.Action
-	target string
-	ttl    time.Duration
-	pid    int32 // reflex only
-	exe    string
-	start  int64
-	record func() error // replay recording (signed only)
+	id      string
+	origin  safety.Origin
+	action  synapsev1.Action
+	target  string
+	ttl     time.Duration
+	clamped bool  // ttl was clamped to maxTTL
+	pid     int32 // reflex only
+	exe     string
+	start   int64
+	record  func() error // replay recording (signed only)
 }
 
-func ttlOf(secs int64) time.Duration {
+func ttlOf(secs int64) (ttl time.Duration, clamped bool) {
 	switch {
 	case secs <= 0:
-		return 0
+		return 0, false
 	case secs >= int64(maxTTL/time.Second):
-		return maxTTL
+		return maxTTL, true
 	default:
-		return time.Duration(secs) * time.Second
+		return time.Duration(secs) * time.Second, false
 	}
+}
+
+// Close flushes ban state that could not be persisted earlier.
+func (e *Engine) Close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.save()
+}
+
+// save persists the store (pruning expired records); e.mu is held. A
+// failure leaves the dirty flag set so the next save writes the full state.
+func (e *Engine) save() error {
+	err := e.store.persist(e.d.Now())
+	e.dirty = err != nil
+	return err
 }
 
 func originName(o safety.Origin) string {
@@ -183,10 +202,11 @@ func originName(o safety.Origin) string {
 
 // Handle processes one request. It never panics.
 func (e *Engine) Handle(req *synapsev1.TurretRequest) (resp *synapsev1.TurretResponse) {
+	id := requestID(req)
 	defer func() {
 		if r := recover(); r != nil {
-			e.d.Log.Error("turret handler panic", "panic", fmt.Sprint(r))
-			resp = reply("", synapsev1.TurretResult_TURRET_RESULT_FAILED, "internal error")
+			e.d.Log.Error("turret handler panic", "panic", fmt.Sprint(r), "id", id)
+			resp = reply(id, synapsev1.TurretResult_TURRET_RESULT_FAILED, "internal error")
 		}
 	}()
 	switch {
@@ -200,18 +220,35 @@ func (e *Engine) Handle(req *synapsev1.TurretRequest) (resp *synapsev1.TurretRes
 	}
 }
 
+// requestID extracts the id without verifying anything; it is only used to
+// label a panic response. Signed payloads are decoded best-effort.
+func requestID(req *synapsev1.TurretRequest) string {
+	if r := req.GetReflex(); r != nil {
+		return r.GetRequestId()
+	}
+	if sc := req.GetSigned(); sc != nil {
+		var p synapsev1.CommandPayload
+		if proto.Unmarshal(sc.GetPayload(), &p) == nil {
+			return p.GetCommandId()
+		}
+	}
+	return ""
+}
+
 func reply(id string, r synapsev1.TurretResult, detail string) *synapsev1.TurretResponse {
 	return &synapsev1.TurretResponse{Id: id, Result: r, Detail: detail}
 }
 
 func (e *Engine) handleReflex(r *synapsev1.ReflexRequest) *synapsev1.TurretResponse {
+	ttl, clamped := ttlOf(r.GetTtlSeconds())
 	c := &cmd{
-		id:     r.GetRequestId(),
-		origin: safety.OriginReflex,
-		action: r.GetAction(),
-		target: r.GetTarget(),
-		ttl:    ttlOf(r.GetTtlSeconds()),
-		pid:    r.GetPid(),
+		id:      r.GetRequestId(),
+		origin:  safety.OriginReflex,
+		action:  r.GetAction(),
+		target:  r.GetTarget(),
+		ttl:     ttl,
+		clamped: clamped,
+		pid:     r.GetPid(),
 	}
 	return e.finish(c, e.dispatch(c))
 }
@@ -228,15 +265,17 @@ func (e *Engine) handleSigned(sc *synapsev1.SignedCommand) *synapsev1.TurretResp
 		return reply("", synapsev1.TurretResult_TURRET_RESULT_REFUSED_SIGNATURE, "missing command_id")
 	}
 	id, exp := p.GetCommandId(), time.Unix(p.GetExpiresAt(), 0)
+	ttl, clamped := ttlOf(p.GetTtlSeconds())
 	c := &cmd{
-		id:     id,
-		origin: safety.OriginFor(v.Class),
-		action: p.GetAction(),
-		target: p.GetTarget(),
-		ttl:    ttlOf(p.GetTtlSeconds()),
-		exe:    p.GetTargetExec(),
-		start:  p.GetTargetStartTime(),
-		record: func() error { return e.d.Replay.Record(id, exp) },
+		id:      id,
+		origin:  safety.OriginFor(v.Class),
+		action:  p.GetAction(),
+		target:  p.GetTarget(),
+		ttl:     ttl,
+		clamped: clamped,
+		exe:     p.GetTargetExec(),
+		start:   p.GetTargetStartTime(),
+		record:  func() error { return e.d.Replay.Record(id, exp) },
 	}
 	return e.finish(c, e.dispatch(c))
 }
@@ -337,21 +376,19 @@ func (e *Engine) netAction(c *cmd) outcome {
 	return e.ban(c, prefix)
 }
 
-// admitReflex runs the reflex limiter and returns the prefix to act on. A
-// widened prefix that touches a protected range falls back to the single
-// address (already checked). Rate limits always act on the single address.
+// admitReflex accounts a reflex action with the limiter and returns the
+// prefix to act on. The limiter only widens to a prefix that does not touch
+// a protected range, so what it records is what is applied. Rate limits
+// always act on the single address and never widen.
 func (e *Engine) admitReflex(single netip.Prefix, a synapsev1.Action) (netip.Prefix, bool) {
-	p, ok := e.d.Limiter.Admit(single.Addr())
-	if !ok {
-		return netip.Prefix{}, false
+	if a == synapsev1.Action_ACTION_RATE_LIMIT {
+		return single, e.d.Limiter.AdmitSingle(single.Addr())
 	}
-	if a == synapsev1.Action_ACTION_RATE_LIMIT || p == single {
-		return single, true
-	}
-	if _, bad := e.prot.Load().Overlaps(p); bad {
-		return single, true
-	}
-	return p, true
+	prot := e.prot.Load()
+	return e.d.Limiter.Admit(single.Addr(), func(p netip.Prefix) bool {
+		_, hit := prot.Overlaps(p)
+		return !hit
+	})
 }
 
 func expiryUnix(now time.Time, ttl time.Duration) int64 {
@@ -380,6 +417,9 @@ func (e *Engine) ban(c *cmd, p netip.Prefix) outcome {
 	}
 	now := e.d.Now()
 	if err := e.d.FW.Add(kind, p, ttl); err != nil {
+		if c.origin == safety.OriginReflex {
+			e.d.Limiter.Release(p)
+		}
 		return failed("firewall: %v", err)
 	}
 	var exp int64
@@ -387,11 +427,15 @@ func (e *Engine) ban(c *cmd, p netip.Prefix) outcome {
 		exp = expiryUnix(now, ttl)
 	}
 	e.store.put(recKey{p, kind}, exp)
-	if err := e.store.persist(); err != nil {
-		e.d.Log.Error("persist ban state", "err", err)
-		return applied("%s %s applied; state not persisted: %v", kind, p, err)
+	note := ""
+	if c.clamped && kind != nft.KindPerm {
+		note = " (ttl clamped to 100y)"
 	}
-	return applied("%s %s", kind, p)
+	if err := e.save(); err != nil {
+		e.d.Log.Error("persist ban state", "err", err)
+		return applied("%s %s%s applied; state not persisted: %v", kind, p, note, err)
+	}
+	return applied("%s %s%s", kind, p, note)
 }
 
 // unban removes p from the firewall and the state; e.mu is held.
@@ -400,7 +444,7 @@ func (e *Engine) unban(p netip.Prefix) outcome {
 		return failed("firewall: %v", err)
 	}
 	e.store.deletePrefix(p)
-	if err := e.store.persist(); err != nil {
+	if err := e.save(); err != nil {
 		e.d.Log.Error("persist ban state", "err", err)
 		return applied("unban %s applied; state not persisted: %v", p, err)
 	}
