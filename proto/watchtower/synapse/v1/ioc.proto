@@ -1,0 +1,27 @@
+// Core-signed IOC bundle distributed to Turret.
+syntax = "proto3";
+
+package watchtower.synapse.v1;
+
+option go_package = "github.com/EForce11/WatchTower/pkg/synapse/v1;synapsev1";
+
+// IocBundle is a versioned set of indicators of compromise.
+message IocBundle {
+  // Monotonically increasing bundle version.
+  uint64 version = 1;
+  // Unix seconds at which Core issued the bundle.
+  int64 issued_at = 2;
+  // Raw 32-byte SHA-256 digests of known-bad files.
+  repeated bytes sha256 = 3;
+  // Known-bad network ranges in CIDR notation.
+  repeated string cidrs = 4;
+}
+
+// SignedIocBundle wraps a serialized IocBundle with Core's signature.
+message SignedIocBundle {
+  // Serialized IocBundle; the signature covers exactly these bytes.
+  bytes payload = 1;
+  bytes signature = 2;
+  // Identifies the Core key that produced the signature.
+  string key_id = 3;
+}

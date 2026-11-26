@@ -1,0 +1,21 @@
+# wt-turret configuration. Uncommented keys are required; commented keys show defaults.
+agent_id: "agent-001"
+# host must be an IP literal (no DNS in the enforcement path)
+core_endpoint: "10.8.0.1:50051"
+
+# socket_path: /run/watchtower/turret.sock
+# socket_group: watchtower
+# Peers allowed on the socket. Default: uid of user "watchtower" (serve refuses to start if empty).
+# allowed_uids: [998]
+# automation_key: /etc/watchtower/automation.pub
+# admin_keys_dir: /etc/watchtower/admin_keys.d
+# ioc_bundle: /var/lib/watchtower/ioc.bundle
+# state_dir: /var/lib/watchtower/turret
+# whitelist_file: /etc/watchtower/whitelist.txt
+# wireguard_cidr: 10.8.0.0/24
+# reflex_budget:
+#   max_targets: 50
+#   window: 10m
+# prefix_limiter:
+#   threshold: 10
+#   window: 60s
