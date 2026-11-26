@@ -28,6 +28,10 @@ func TestParseNetTarget(t *testing.T) {
 		{"10.0.0.0/15", OriginAdmin, ""},
 		{"2001:db8::/32", OriginAdmin, "2001:db8::/32"},
 		{"2001:db8::/31", OriginAdmin, ""},
+		{"203.0.113.7/24", OriginAdmin, "203.0.113.0/24"},
+		{"::ffff:203.0.113.7", OriginReflex, "203.0.113.7/32"},
+		{"::ffff:203.0.113.0/120", OriginAdmin, ""},
+		{"203.0.113.7/32", OriginReflex, ""},
 		{"garbage", OriginAdmin, ""},
 		{"", OriginAdmin, ""},
 		{"fe80::1%eth0", OriginAdmin, ""},
@@ -47,10 +51,13 @@ func TestParseNetTarget(t *testing.T) {
 }
 
 func TestParsePIDTarget(t *testing.T) {
-	for _, in := range []string{"pid:1", "pid:0", "pid:-5", "pid:x", "4412", "pid:"} {
+	for _, in := range []string{"pid:1", "pid:0", "pid:-5", "pid:x", "4412", "pid:", "pid:+4412", "pid: 44", "pid:4 4"} {
 		if n, err := ParsePIDTarget(in); err == nil {
 			t.Errorf("%q: want error, got %d", in, n)
 		}
+	}
+	if n, err := ParsePIDTarget("pid:004412"); err != nil || n != 4412 {
+		t.Errorf("leading zeros: %d, %v", n, err)
 	}
 	if n, err := ParsePIDTarget("pid:4412"); err != nil || n != 4412 {
 		t.Errorf("got %d, %v", n, err)

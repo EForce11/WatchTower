@@ -34,8 +34,9 @@ const (
 	minPrefixV6 = 32
 )
 
-// ParseNetTarget parses a single IP (to /32 or /128) or, for non-reflex
-// origins only, a CIDR no broader than /16 (IPv4) or /32 (IPv6).
+// ParseNetTarget parses a single IP (to /32 or /128; IPv4-mapped IPv6 is
+// unmapped) or, for non-reflex origins only, a CIDR (an explicit /32 or /128
+// counts as a CIDR, so reflex origins may not use it) no broader than /16 (IPv4) or /32 (IPv6).
 func ParseNetTarget(s string, o Origin) (netip.Prefix, error) {
 	if !strings.Contains(s, "/") {
 		a, err := netip.ParseAddr(s)
@@ -69,6 +70,9 @@ func ParseNetTarget(s string, o Origin) (netip.Prefix, error) {
 func ParsePIDTarget(s string) (int, error) {
 	rest, ok := strings.CutPrefix(s, "pid:")
 	if !ok {
+		return 0, fmt.Errorf("invalid pid target %q", s)
+	}
+	if rest == "" || strings.Trim(rest, "0123456789") != "" {
 		return 0, fmt.Errorf("invalid pid target %q", s)
 	}
 	n, err := strconv.Atoi(rest)

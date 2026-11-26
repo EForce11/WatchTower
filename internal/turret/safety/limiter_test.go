@@ -158,3 +158,17 @@ func TestLimiterBoundedAndConcurrent(t *testing.T) {
 		t.Fatalf("state not pruned: %d admitted, %d hit groups", len(l.admitted), len(l.hits))
 	}
 }
+
+func TestAdmitInvalidAndMapped(t *testing.T) {
+	l, _ := newLimiter()
+	if p, ok := l.Admit(netip.Addr{}); ok || p.IsValid() {
+		t.Fatalf("invalid addr: %v %v", p, ok)
+	}
+	if len(l.admitted) != 0 {
+		t.Fatal("invalid addr consumed budget")
+	}
+	p, ok := l.Admit(netip.MustParseAddr("::ffff:203.0.113.7"))
+	if !ok || p != netip.MustParsePrefix("203.0.113.7/32") {
+		t.Fatalf("mapped: %v %v", p, ok)
+	}
+}
