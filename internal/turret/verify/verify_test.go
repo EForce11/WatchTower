@@ -177,8 +177,8 @@ func TestVerifyWindowAndLifetime(t *testing.T) {
 	t.Run("garbage payload", func(t *testing.T) {
 		b := []byte{0xff, 0xff, 0xff}
 		sc := &synapsev1.SignedCommand{Payload: b, Signature: ed25519.Sign(f.autoPriv, b), KeyId: KeyID(f.autoPub), Scheme: synapsev1.SignatureScheme_SIGNATURE_SCHEME_ED25519}
-		if _, err := f.ring.Verify(sc, "agent-1", t0); err == nil {
-			t.Fatal("expected error")
+		if _, err := f.ring.Verify(sc, "agent-1", t0); !errors.Is(err, ErrMalformedPayload) {
+			t.Fatal(err)
 		}
 	})
 }
@@ -204,6 +204,10 @@ func TestVerifyDetached(t *testing.T) {
 	class, err := f.ring.VerifyDetached(blob, sig, KeyID(f.autoPub))
 	if err != nil || class != KeyAutomation {
 		t.Fatalf("%v %v", class, err)
+	}
+	asig := ed25519.Sign(f.admPriv, blob)
+	if class, err := f.ring.VerifyDetached(blob, asig, KeyID(f.admPub)); err != nil || class != KeyAdmin {
+		t.Fatalf("admin: %v %v", class, err)
 	}
 	if _, err := f.ring.VerifyDetached([]byte("tampered"), sig, KeyID(f.autoPub)); !errors.Is(err, ErrBadSignature) {
 		t.Fatal(err)
@@ -266,6 +270,16 @@ func TestParsePublicKeyPEM(t *testing.T) {
 	if _, err := ParsePublicKeyPEM(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})); err == nil {
 		t.Fatal("RSA must be rejected")
 	}
+	good := pemOf(t, ap)
+	if _, err := ParsePublicKeyPEM(append(append([]byte{}, good...), []byte("junk")...)); err == nil {
+		t.Fatal("trailing data must be rejected")
+	}
+	if _, err := ParsePublicKeyPEM(append(append([]byte{}, good...), '\n', '\n')); err != nil {
+		t.Fatalf("trailing whitespace: %v", err)
+	}
+	if _, err := ParsePublicKeyPEM(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: mustDER(t, ap)})); err == nil {
+		t.Fatal("wrong PEM type must be rejected")
+	}
 	if _, err := ParsePublicKeyPEM([]byte("garbage")); err == nil {
 		t.Fatal("garbage must be rejected")
 	}
@@ -276,4 +290,13 @@ func TestKeyID(t *testing.T) {
 	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(KeyID(ap)) {
 		t.Fatal(KeyID(ap))
 	}
+}
+
+func mustDER(t *testing.T, pub ed25519.PublicKey) []byte {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der
 }

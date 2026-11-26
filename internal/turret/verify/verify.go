@@ -16,6 +16,7 @@ var (
 	ErrUnknownKey        = errors.New("unknown key id")
 	ErrBadSignature      = errors.New("bad signature")
 	ErrUnsupportedScheme = errors.New("unsupported signature scheme")
+	ErrMalformedPayload  = errors.New("malformed command payload")
 	ErrWrongAgent        = errors.New("command addressed to another agent")
 	ErrNotYetValid       = errors.New("command not yet valid")
 	ErrExpired           = errors.New("command expired")
@@ -63,7 +64,7 @@ func (k *Keyring) Verify(sc *synapsev1.SignedCommand, agentID string, now time.T
 	}
 	p := &synapsev1.CommandPayload{}
 	if err := proto.Unmarshal(sc.GetPayload(), p); err != nil {
-		return Verified{}, fmt.Errorf("decode payload: %w", ErrBadSignature)
+		return Verified{}, fmt.Errorf("%w: %v", ErrMalformedPayload, err)
 	}
 	if p.GetAgentId() != agentID {
 		return Verified{}, ErrWrongAgent
