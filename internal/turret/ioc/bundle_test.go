@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -123,5 +124,54 @@ func TestLoadMissingFileEmptySet(t *testing.T) {
 	}
 	if s == nil || s.HasSHA256([32]byte{}) {
 		t.Fatalf("set = %+v", s)
+	}
+}
+
+func (f *fx) writeRaw(t *testing.T, raw []byte) string {
+	t.Helper()
+	p := filepath.Join(f.dir, "raw.bin")
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestLoadGarbageOuter(t *testing.T) {
+	f := newFx(t)
+	if _, err := Load(f.writeRaw(t, []byte{0xff, 0xff, 0xff, 0xff}), f.ring); err == nil {
+		t.Fatal("garbage accepted")
+	}
+}
+
+func TestLoadUnknownKey(t *testing.T) {
+	f := newFx(t)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	h := sha256.Sum256([]byte("evil"))
+	_, err := Load(f.write(t, [][]byte{h[:]}, priv, pub, false), f.ring)
+	if !errors.Is(err, verify.ErrUnknownKey) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadTamperedErrorKind(t *testing.T) {
+	f := newFx(t)
+	h := sha256.Sum256([]byte("evil"))
+	_, err := Load(f.write(t, [][]byte{h[:]}, f.autoPriv, f.autoPub, true), f.ring)
+	if !errors.Is(err, verify.ErrBadSignature) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadValidSignatureUndecodablePayload(t *testing.T) {
+	f := newFx(t)
+	payload := []byte{0xff, 0xff, 0xff}
+	raw, err := proto.Marshal(&synapsev1.SignedIocBundle{
+		Payload: payload, Signature: ed25519.Sign(f.autoPriv, payload), KeyId: verify.KeyID(f.autoPub),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(f.writeRaw(t, raw), f.ring); err == nil {
+		t.Fatal("undecodable payload accepted")
 	}
 }

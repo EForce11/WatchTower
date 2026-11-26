@@ -60,8 +60,13 @@ func Inspect(pid int) (Info, error) {
 			i.Memfd = true
 		}
 		if strings.HasSuffix(exe, deletedSuffix) {
-			i.Deleted = true
-			exe = strings.TrimSuffix(exe, deletedSuffix)
+			// A live file may legitimately be named "... (deleted)"; confirm
+			// through the inode behind the magic link (fail closed on error).
+			var st syscall.Stat_t
+			if err := syscall.Stat(dir+"/exe", &st); err != nil || st.Nlink == 0 {
+				i.Deleted = true
+				exe = strings.TrimSuffix(exe, deletedSuffix)
+			}
 		}
 		i.Exe = exe
 	}
@@ -99,10 +104,21 @@ var immuneExes = map[string]bool{
 	"wg": true, "wg-quick": true, "wireguard-go": true,
 }
 
-// Immune reports whether a process must never be killed.
+// systemPrefixes are the only locations where name-based immunity applies.
+var systemPrefixes = []string{
+	"/usr/bin/", "/usr/sbin/", "/usr/local/bin/", "/usr/local/sbin/",
+	"/bin/", "/sbin/", "/opt/watchtower/",
+}
+
+// Immune reports whether a process must never be killed. PID 1, self and
+// kernel threads are unconditional; name-based immunity needs the (kernel
+// resolved) exe path to sit under a system prefix and outside temp dirs.
 func Immune(i Info, self int) bool {
 	if i.PID == 1 || i.PID == self || i.PID == 2 || i.PPID == 2 || i.Kernel {
 		return true
+	}
+	if !underAny(i.Exe, systemPrefixes) || underAny(i.Exe, DefaultTempDirs) {
+		return false
 	}
 	base := filepath.Base(i.Exe)
 	if immuneExes[base] {
