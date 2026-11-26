@@ -118,7 +118,8 @@ func TestVerifyErrors(t *testing.T) {
 	t.Run("webauthn", func(t *testing.T) {
 		sc := good()
 		sc.Scheme = synapsev1.SignatureScheme_SIGNATURE_SCHEME_WEBAUTHN_ES256
-		if _, err := f.ring.Verify(sc, "agent-1", t0); !errors.Is(err, ErrUnsupportedScheme) {
+		_, err := f.ring.Verify(sc, "agent-1", t0)
+		if !errors.Is(err, ErrUnsupportedScheme) || err.Error() != "scheme not supported until Phase 5" {
 			t.Fatal(err)
 		}
 	})

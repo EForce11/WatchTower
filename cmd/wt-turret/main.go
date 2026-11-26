@@ -34,7 +34,7 @@ import (
 var Version = "dev"
 
 const (
-	usage            = "usage: wt-turret serve --config <file> | panic-flush | version"
+	usage            = "usage: wt-turret serve --config <file> | panic-flush [--clear-state] [--state-dir DIR] | version"
 	protectedRefresh = 60 * time.Second
 )
 
@@ -62,12 +62,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "serve":
 		return serve(args[1:], stderr)
 	case "panic-flush":
-		if err := flush(); err != nil {
-			fmt.Fprintf(stderr, "panic-flush: %v\n", err)
-			return 1
-		}
-		fmt.Fprintln(stdout, "watchtower firewall table removed")
-		return 0
+		return panicFlush(args[1:], stdout, stderr)
 	case "version":
 		fmt.Fprintf(stdout, "wt-turret %s\n", Version)
 		return 0
@@ -75,6 +70,46 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "unknown subcommand %q\n%s\n", args[0], usage)
 		return 2
 	}
+}
+
+// defaultStateDir matches the config default; panic-flush loads no config.
+const defaultStateDir = "/var/lib/watchtower/turret"
+
+// panicFlush removes the firewall table and, with --clear-state, moves
+// bans.json aside so the next start does not re-apply the bans that caused
+// the lockout. It loads no config and no keys.
+func panicFlush(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("panic-flush", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	clearState := fs.Bool("clear-state", false, "rename <state-dir>/bans.json to bans.json.flushed-<unix> after flushing")
+	stateDir := fs.String("state-dir", defaultStateDir, "turret state directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintf(stderr, "panic-flush: unexpected argument %q\n%s\n", fs.Arg(0), usage)
+		return 2
+	}
+	if err := flush(); err != nil {
+		fmt.Fprintf(stderr, "panic-flush: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, "watchtower firewall table removed")
+	if !*clearState {
+		return 0
+	}
+	src := filepath.Join(*stateDir, "bans.json")
+	dst := fmt.Sprintf("%s.flushed-%d", src, time.Now().Unix())
+	switch err := os.Rename(src, dst); {
+	case err == nil:
+		fmt.Fprintf(stdout, "ban state moved to %s\n", dst)
+	case errors.Is(err, os.ErrNotExist):
+		fmt.Fprintf(stdout, "no ban state at %s\n", src)
+	default:
+		fmt.Fprintf(stderr, "panic-flush: clear state: %v\n", err)
+		return 1
+	}
+	return 0
 }
 
 // acquireLock takes an exclusive, non-blocking flock on <stateDir>/turret.lock,
