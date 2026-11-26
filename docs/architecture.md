@@ -983,4 +983,5 @@ README roadmap and CHANGELOG must be updated in the same change that starts Phas
 - **Encrypted application traffic** is visible only through application logs; there is no TLS interception or packet capture.
 - **Fake telemetry** from a compromised agent can raise fleet reputation for an IP. It is bounded by T2 actions (temporary bans with TTL) and by the fleet whitelist; destructive actions always involve a human.
 - **LLM output** is untrusted text; it can be wrong or manipulated, which is why it is advisory-only and allow-listed.
+- **Stale allow list after a failed nftables update:** if the kernel rejects an allow-list update, an address newly added to the protected set can still match an existing ban until a retry succeeds. Turret retries after 1 s with backoff up to 60 s, and it applies the new set to every new ban in the meantime. `panic-flush` is the manual override.
 - **Scale:** designed for ~200 agents on one Core. Horizontal Core scaling is not planned for v1.
