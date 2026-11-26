@@ -122,3 +122,97 @@ func TestSetAllowValidation(t *testing.T) {
 		t.Fatal("invalid prefix must be rejected")
 	}
 }
+
+type clock struct{ t time.Time }
+
+func (c *clock) now() time.Time          { return c.t }
+func (c *clock) advance(d time.Duration) { c.t = c.t.Add(d) }
+
+func newClock() *clock { return &clock{t: time.Unix(1_700_000_000, 0)} }
+
+func TestFakeNeverShortens(t *testing.T) {
+	a := netip.MustParseAddr("10.0.0.2")
+	other := netip.MustParseAddr("10.0.0.3")
+
+	t.Run("narrower longer inside wider shorter", func(t *testing.T) {
+		c := newClock()
+		f := NewFakeAt(c.now)
+		_ = f.Add(KindBan, mp("10.0.0.0/24"), 2*time.Second)
+		_ = f.Add(KindBan, mp("10.0.0.2/32"), 8*time.Second)
+		c.advance(3 * time.Second)
+		if !f.Blocked(KindBan, a) || f.Blocked(KindBan, other) {
+			t.Fatal("only the /32 should still block")
+		}
+		if f.Has(KindBan, mp("10.0.0.0/24")) {
+			t.Fatal("expired /24 record must not be reported")
+		}
+	})
+	t.Run("wider shorter added over narrower longer", func(t *testing.T) {
+		c := newClock()
+		f := NewFakeAt(c.now)
+		_ = f.Add(KindBan, mp("10.0.0.2/32"), 8*time.Second)
+		_ = f.Add(KindBan, mp("10.0.0.0/24"), 2*time.Second)
+		c.advance(3 * time.Second)
+		if !f.Blocked(KindBan, a) || f.Blocked(KindBan, other) {
+			t.Fatal("only the /32 should still block")
+		}
+	})
+	t.Run("remove wider keeps narrower", func(t *testing.T) {
+		f := NewFakeAt(newClock().now)
+		_ = f.Add(KindBan, mp("10.0.0.2/32"), time.Minute)
+		_ = f.Add(KindBan, mp("10.0.0.0/24"), time.Minute)
+		_ = f.Remove(mp("10.0.0.0/24"))
+		if !f.Blocked(KindBan, a) || f.Blocked(KindBan, other) {
+			t.Fatal("narrower ban must survive Remove of the wider one")
+		}
+	})
+	t.Run("remove narrower inside wider keeps blocking", func(t *testing.T) {
+		f := NewFakeAt(newClock().now)
+		_ = f.Add(KindBan, mp("10.0.0.0/24"), time.Minute)
+		_ = f.Add(KindBan, mp("10.0.0.2/32"), time.Minute)
+		_ = f.Remove(mp("10.0.0.2/32"))
+		if !f.Blocked(KindBan, a) {
+			t.Fatal("still covered by the /24")
+		}
+	})
+	t.Run("re-add shorter keeps longer", func(t *testing.T) {
+		c := newClock()
+		f := NewFakeAt(c.now)
+		_ = f.Add(KindBan, mp("10.0.0.2/32"), time.Hour)
+		_ = f.Add(KindBan, mp("10.0.0.2/32"), time.Second)
+		exp, ok := f.Expiry(KindBan, a)
+		if !ok || exp.Sub(c.now()) != time.Hour {
+			t.Fatalf("expiry=%v ok=%v", exp, ok)
+		}
+	})
+	t.Run("perm has no expiry", func(t *testing.T) {
+		c := newClock()
+		f := NewFakeAt(c.now)
+		_ = f.Add(KindPerm, mp("10.0.0.0/24"), 0)
+		c.advance(1000 * time.Hour)
+		exp, ok := f.Expiry(KindPerm, a)
+		if !ok || !exp.IsZero() {
+			t.Fatalf("expiry=%v ok=%v", exp, ok)
+		}
+	})
+}
+
+func TestRecordSetSegments(t *testing.T) {
+	c := newClock()
+	var rs recordSet
+	rs.add(prefixSpan(mp("10.0.0.0/24")), c.now().Add(2*time.Second))
+	rs.add(prefixSpan(mp("10.0.0.2/32")), c.now().Add(8*time.Second))
+	segs := rs.segments(c.now())
+	if len(segs) != 3 {
+		t.Fatalf("segments=%+v", segs)
+	}
+	if segs[1].lo.String() != "10.0.0.2" || segs[1].hi.String() != "10.0.0.3" || !segs[1].deadline.Equal(c.now().Add(8*time.Second)) {
+		t.Fatalf("middle=%+v", segs[1])
+	}
+	// Whole address space: no end element.
+	var all recordSet
+	all.add(prefixSpan(mp("0.0.0.0/0")), c.now().Add(time.Second))
+	if s := all.segments(c.now()); len(s) != 1 || !s[0].open {
+		t.Fatalf("segments=%+v", s)
+	}
+}

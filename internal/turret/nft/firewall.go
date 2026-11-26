@@ -112,10 +112,14 @@ type Call struct {
 }
 
 // Fake is an in-memory Firewall for engine tests. It enforces the same
-// argument validation as the real implementation.
+// argument validation and models the same effective coverage as the real
+// implementation: bans are never shortened, an address stays blocked until
+// the latest deadline of any entry covering it, and Remove deletes exactly
+// the given prefix.
 type Fake struct {
 	mu       sync.Mutex
-	state    map[Kind]map[netip.Prefix]time.Duration
+	now      func() time.Time
+	state    map[Kind]*recordSet
 	allow    []netip.Prefix
 	calls    []Call
 	failNext error
@@ -123,9 +127,12 @@ type Fake struct {
 
 var _ Firewall = (*Fake)(nil)
 
-// NewFake returns an empty Fake.
-func NewFake() *Fake {
-	return &Fake{state: map[Kind]map[netip.Prefix]time.Duration{}}
+// NewFake returns an empty Fake using the wall clock.
+func NewFake() *Fake { return NewFakeAt(time.Now) }
+
+// NewFakeAt returns an empty Fake using the given clock.
+func NewFakeAt(now func() time.Time) *Fake {
+	return &Fake{now: now, state: map[Kind]*recordSet{}}
 }
 
 // FailNext makes the next Firewall call return err without mutating state.
@@ -152,7 +159,14 @@ func (f *Fake) Calls() []Call {
 	return append([]Call(nil), f.calls...)
 }
 
-// Has reports whether p is present in the set for k.
+func (f *Fake) records(k Kind) *recordSet {
+	if f.state[k] == nil {
+		f.state[k] = &recordSet{}
+	}
+	return f.state[k]
+}
+
+// Has reports whether exactly p is a live entry for k.
 func (f *Fake) Has(k Kind, p netip.Prefix) bool {
 	np, err := normalize(p)
 	if err != nil {
@@ -160,20 +174,22 @@ func (f *Fake) Has(k Kind, p netip.Prefix) bool {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	_, ok := f.state[k][np]
+	return f.records(k).has(prefixSpan(np), f.now())
+}
+
+// Blocked reports whether any live entry for k covers a.
+func (f *Fake) Blocked(k Kind, a netip.Addr) bool {
+	_, ok := f.Expiry(k, a)
 	return ok
 }
 
-// TTL returns the ttl recorded for p in the set for k.
-func (f *Fake) TTL(k Kind, p netip.Prefix) (time.Duration, bool) {
-	np, err := normalize(p)
-	if err != nil {
-		return 0, false
-	}
+// Expiry returns when a stops being covered for k (zero time: never) and
+// whether it is covered at all.
+func (f *Fake) Expiry(k Kind, a netip.Addr) (time.Time, bool) {
+	a = a.WithZone("").Unmap()
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	d, ok := f.state[k][np]
-	return d, ok
+	return f.records(k).coverage(a, f.now())
 }
 
 // Allow returns a copy of the current allow list.
@@ -216,17 +232,17 @@ func (f *Fake) Add(k Kind, p netip.Prefix, ttl time.Duration) error {
 	if err != nil {
 		return err
 	}
-	if k == KindPerm {
-		ttl = 0
+	var deadline time.Time
+	if k != KindPerm {
+		deadline = f.now().Add(ttl)
 	}
-	if f.state[k] == nil {
-		f.state[k] = map[netip.Prefix]time.Duration{}
-	}
-	f.state[k][np] = ttl
+	rs := f.records(k)
+	rs.prune(f.now())
+	rs.add(prefixSpan(np), deadline)
 	return nil
 }
 
-// Remove deletes p from every kind.
+// Remove deletes exactly p from every kind.
 func (f *Fake) Remove(p netip.Prefix) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -237,8 +253,9 @@ func (f *Fake) Remove(p netip.Prefix) error {
 	if err != nil {
 		return err
 	}
-	for _, m := range f.state {
-		delete(m, np)
+	sp := prefixSpan(np)
+	for _, rs := range f.state {
+		rs.remove(sp)
 	}
 	return nil
 }
@@ -250,7 +267,7 @@ func (f *Fake) Flush() error {
 	if err := f.begin(Call{Op: "Flush"}); err != nil {
 		return err
 	}
-	f.state = map[Kind]map[netip.Prefix]time.Duration{}
+	f.state = map[Kind]*recordSet{}
 	f.allow = nil
 	return nil
 }
