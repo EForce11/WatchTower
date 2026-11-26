@@ -34,9 +34,25 @@ func start(t *testing.T, path string) (*exec.Cmd, chan error) { //nolint:gocriti
 	return cmd, done
 }
 
+// helperEnv makes the test binary act as a long-sleeping child (see
+// TestMain). Re-executing the test binary instead of a system tool such as
+// sleep(1) keeps the tests independent of how the host's coreutils are built:
+// a multicall binary dispatching on argv[0] or its location would exit at
+// once when copied to a temp dir under another name.
+const helperEnv = "WT_PROC_HELPER"
+
+func TestMain(m *testing.M) {
+	if os.Getenv(helperEnv) == "sleep" {
+		time.Sleep(30 * time.Second)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
 func startE(t *testing.T, path string) (cmd *exec.Cmd, done chan error, err error) {
 	t.Helper()
-	cmd = exec.Command(path, "30")
+	cmd = exec.Command(path)
+	cmd.Env = append(os.Environ(), helperEnv+"=sleep")
 	if err := cmd.Start(); err != nil {
 		return nil, nil, err
 	}
@@ -52,11 +68,13 @@ func startE(t *testing.T, path string) (cmd *exec.Cmd, done chan error, err erro
 	return cmd, done, nil
 }
 
-func sleepPath(t *testing.T) string {
+// helperPath is the resolved path of the test binary, which sleeps when
+// started with helperEnv set.
+func helperPath(t *testing.T) string {
 	t.Helper()
-	p, err := exec.LookPath("sleep")
+	p, err := os.Executable()
 	if err != nil {
-		t.Skip("no sleep binary")
+		t.Fatal(err)
 	}
 	r, err := filepath.EvalSymlinks(p)
 	if err != nil {
@@ -92,7 +110,7 @@ func assertAlive(t *testing.T, done chan error) {
 }
 
 func TestInspect(t *testing.T) {
-	sp := sleepPath(t)
+	sp := helperPath(t)
 	cmd, _ := start(t, sp)
 	i, err := Inspect(cmd.Process.Pid)
 	if err != nil {
@@ -146,7 +164,7 @@ func TestImmune(t *testing.T) {
 }
 
 func TestKill(t *testing.T) {
-	sp := sleepPath(t)
+	sp := helperPath(t)
 	cmd, done := start(t, sp)
 	i, err := Inspect(cmd.Process.Pid)
 	if err != nil {
@@ -159,7 +177,7 @@ func TestKill(t *testing.T) {
 }
 
 func TestKillMismatch(t *testing.T) {
-	sp := sleepPath(t)
+	sp := helperPath(t)
 	cmd, done := start(t, sp)
 	i, err := Inspect(cmd.Process.Pid)
 	if err != nil {
@@ -187,7 +205,7 @@ func TestKillImmuneSelf(t *testing.T) {
 
 func copyBin(t *testing.T, dir string) string {
 	t.Helper()
-	src, err := os.Open(sleepPath(t))
+	src, err := os.Open(helperPath(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,7 +379,7 @@ func TestKillTempMalwareMemfd(t *testing.T) {
 	}
 	mf := os.NewFile(uintptr(fd), "memfd")
 	t.Cleanup(func() { _ = mf.Close() })
-	src, err := os.Open(sleepPath(t))
+	src, err := os.Open(helperPath(t))
 	if err != nil {
 		t.Fatal(err)
 	}
