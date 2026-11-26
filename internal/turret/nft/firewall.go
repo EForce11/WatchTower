@@ -162,6 +162,7 @@ type Fake struct {
 	allow    []netip.Prefix
 	calls    []Call
 	failNext error
+	hook     func(Call)
 }
 
 var _ Firewall = (*Fake)(nil)
@@ -199,6 +200,24 @@ func (f *Fake) FailNext(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failNext = err
+}
+
+// OnCall installs fn to run at the start of every Add and SetAllow, before
+// the Fake takes its lock, so tests can block a call to force an ordering.
+// nil removes it.
+func (f *Fake) OnCall(fn func(Call)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hook = fn
+}
+
+func (f *Fake) runHook(c Call) {
+	f.mu.Lock()
+	fn := f.hook
+	f.mu.Unlock()
+	if fn != nil {
+		fn(c)
+	}
 }
 
 // begin records the call and consumes a pending injected failure.
@@ -267,6 +286,7 @@ func (f *Fake) Ensure() error {
 
 // SetAllow replaces the allow list.
 func (f *Fake) SetAllow(p []netip.Prefix) error {
+	f.runHook(Call{Op: "SetAllow"})
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.begin(Call{Op: "SetAllow"}); err != nil {
@@ -282,6 +302,7 @@ func (f *Fake) SetAllow(p []netip.Prefix) error {
 
 // Add validates and records p.
 func (f *Fake) Add(k Kind, p netip.Prefix, ttl time.Duration) error {
+	f.runHook(Call{Op: "Add", Kind: k, P: p, TTL: ttl})
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.begin(Call{Op: "Add", Kind: k, P: p, TTL: ttl}); err != nil {

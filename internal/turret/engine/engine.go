@@ -192,14 +192,16 @@ func (e *Engine) replaceFromStore(now time.Time) error {
 }
 
 // SetProtected swaps the protected set and refreshes the firewall allow
-// list. The new set is used for overlap checks even if SetAllow fails.
+// list. The new set is used for overlap checks even if SetAllow fails. It
+// holds e.mu like netAction, so a ban checked against the old set is
+// applied before the new set is installed, never after.
 func (e *Engine) SetProtected(p *safety.Protected) error {
 	if p == nil {
 		return errors.New("engine: nil protected set")
 	}
-	e.prot.Store(p)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	e.prot.Store(p)
 	return e.d.FW.SetAllow(p.Prefixes())
 }
 
@@ -405,14 +407,17 @@ func (e *Engine) netAction(c *cmd) outcome {
 	if c.action == synapsev1.Action_ACTION_RATE_LIMIT && !isSingle(prefix) {
 		return refused("rate limit requires a single address")
 	}
+	// The protected check, limiter and firewall change form one critical
+	// section with SetProtected, so a refresh cannot install a set covering
+	// the target between the check and the ban.
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	// UNBAN is allowed to touch protected ranges so stale bans can be lifted.
 	if c.action != synapsev1.Action_ACTION_UNBAN {
 		if hit, bad := e.prot.Load().Overlaps(prefix); bad {
 			return refused("target %s overlaps protected range %s", prefix, hit)
 		}
 	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
 	if c.action == synapsev1.Action_ACTION_UNBAN && e.store.hasPerm(prefix) && c.origin != safety.OriginAdmin {
 		return refused("permanent ban requires admin to lift")
 	}
@@ -432,7 +437,7 @@ func (e *Engine) netAction(c *cmd) outcome {
 }
 
 // admitReflex accounts a reflex action with the limiter and returns the
-// prefix to act on. The limiter only widens to a prefix that does not touch
+// prefix to act on; e.mu is held. The limiter only widens to a prefix that does not touch
 // a protected range, so what it records is what is applied. Rate limits
 // always act on the single address and never widen.
 func (e *Engine) admitReflex(single netip.Prefix, a synapsev1.Action) (netip.Prefix, bool) {
