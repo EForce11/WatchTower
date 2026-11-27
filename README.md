@@ -67,6 +67,13 @@ For full architecture details, see [docs/architecture.md](docs/architecture.md).
 
 ## Features
 
+### ✅ Done (v0.4.0, Phase 1: `wt-turret`)
+- Root enforcement daemon on a Unix socket (`SO_PEERCRED`), single-instance lock, `panic-flush` rollback
+- Safety layer: self-preservation ranges, overlap refusal, origin×action policy, Reflex budget and /24 limiter
+- Ed25519-signed commands with a persistent replay cache; Core-signed IOC bundle
+- nftables enforcement with bans that never shorten and survive restarts; PID-reuse-safe kills
+- Real-kernel tests in unprivileged network namespaces, also in CI
+
 ### ✅ Done (v0.3.0, Phase 0: contracts)
 - `synapse.v1` protobuf contracts (`buf`), event validation and IPC framing
 - TimescaleDB schema migrations with an owner/runtime role split
@@ -209,7 +216,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, branch namin
 
 - [x] v0.2.0 prototype: gRPC communication, heartbeat, log watcher
 - [x] Phase 0: Contracts (protobuf schemas, SQL migrations, rule layout) (v0.3.0)
-- [ ] Phase 1: `wt-turret` safety-first enforcement
+- [x] Phase 1: `wt-turret` safety-first enforcement (v0.4.0)
 - [ ] Phase 2: `wt-sentry` normalized telemetry and local detection
 - [ ] Phase 3: `wt-core` correlation and fleet immunity
 - [ ] Phase 4: `wt-cli` and human-in-the-loop approvals
