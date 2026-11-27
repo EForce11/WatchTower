@@ -1,7 +1,7 @@
-# 🏛️ WatchTower XDR — System Design Document v3.2
+# 🏛️ WatchTower XDR — System Design Document v3.3
 
 **Project Status:** Pre-Alpha, Single-Maintainer, Active Development ⚠️ | Code: Pre-Release (`v0.2.0` → v3.2 architectural transition)
-**Last Updated:** 2026-11-25
+**Last Updated:** 2026-11-27
 **Architect & Developer:** Emir Furkan Ulu
 **Vision:** "Simple setup, bounded and reversible self-inflicted risk, explainable fleet-wide detection and response powered by deterministic rules — with AI as an optional, advisory analyst."
 
@@ -13,7 +13,25 @@ Previous revisions live in [`docs/archive/`](archive/).
 
 ## 🔍 Version History
 
-### v3.1 → v3.2 (XDR Core & Trust-Model Corrections) ⭐ CURRENT
+### v3.2 → v3.3 (Core Decides, Kernel Flood Guard, Audit by Default) ⭐ CURRENT
+
+Response decisions move to Core. Agents become sensors and executors; the only local, automatic response left is a kernel-level flood guard.
+
+1. **Reflex Arc removed.** Sentry no longer sends `ReflexRequest`s and Turret no longer accepts them. The Reflex budget, the local prefix limiter and the `REFLEX` origin are gone. Sentry reports detections, including IOC matches in temp dirs, to Core, and Core decides.
+2. **Flood Guard (§3.4.3).** Turret installs per-source rate meters in its nftables table:
+   - new TCP connections per second
+   - packets per second
+   - concurrent connections per source
+
+   Sources over a threshold enter a per-meter offenders set. The kernel enforces this without a userspace decision, an entry expires on its own once the source calms down, and Turret reports every offender to Core. The thresholds are policy: configured locally today, pushed by Core as signed policy in Phase 3. Payload similarity is deliberately not used.
+3. **Audit mode is the default** (§3.1.3, §3.4.3):
+   - **Core:** `enforcement_mode` defaults to `audit`. Core records what it *would* do and sends no commands.
+   - **Turret:** the Flood Guard defaults to `audit`. Offenders are recorded and reported, but not dropped.
+   - Enforcement starts only when an operator switches the mode to `enforce`.
+4. **Per-source `RATE_LIMIT`.** A Core-signed `RATE_LIMIT` now throttles each listed source against its own meter instead of one shared bucket.
+5. **Roadmap.** Phase 1.5 (v0.5.0) delivers the above; later phases shift by one minor version.
+
+### v3.1 → v3.2 (XDR Core & Trust-Model Corrections)
 
 v3.1 got the direction right (scope cut, privilege split, CSR PKI, read-only FIM, signed commands). v3.2 fills in the part that actually makes this an XDR — the data model, detection language and cross-host correlation — and fixes trust-model and math errors found in the v3.1 review.
 
@@ -80,7 +98,7 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 | Data model | Per-tool log lines | One normalized event schema with entities (§4.1) |
 | Detection | Regex per log file | Sigma-compatible rules + correlation rules (§4.2) |
 | Correlation scope | Single host, single log | Cross-layer (auth + web + process + FIM + network) **and** cross-host |
-| Response scope | Local host | Local reflex **plus** fleet-wide immunity (§3.1.4) |
+| Response scope | Local host | Core-decided response, fleet-wide immunity (§3.1.4), plus a kernel flood guard on each host (§3.4.3) |
 | Explainability | Matched line | Incident timeline, matched rules, score breakdown, optional AI narrative |
 
 ### 1.2 Non-Negotiable Architectural Invariants
@@ -127,14 +145,14 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 │  │  • /proc metrics, IOC matcher        │                                 │
 │  │  • Local rules + sliding windows     │                                 │
 │  └───────┬───────────────────────┬──────┘                                 │
-│          │ Reflex Arc            │ forwards SignedCommand bytes           │
-│          │ (unix socket,         │ (opaque, cannot modify)                │
-│          ▼  SO_PEERCRED)         ▼                                        │
+│                                  │ forwards SignedCommand bytes           │
+│                                  │ (unix socket, SO_PEERCRED;             │
+│                                  ▼  opaque, cannot modify)                │
 │  ┌──────────────────────────────────────┐   root, no network listener     │
 │  │ wt-turret  (Motor Nerves)            │                                 │
 │  │  • Safety layer (self-preservation)  │                                 │
 │  │  • Signature + replay verification   │                                 │
-│  │  • nftables table `inet watchtower`  │                                 │
+│  │  • nftables table + Flood Guard      │                                 │
 │  │  • Verified process kill             │                                 │
 │  └──────────────────────────────────────┘                                 │
 └───────────┬───────────────────────────────────────────────────────────────┘
@@ -176,7 +194,7 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 
 | Source → Destination | Transport | Authentication | Purpose |
 |---|---|---|---|
-| `wt-sentry` → `wt-turret` | Unix socket | File mode `0660` + `SO_PEERCRED` UID check | `REFLEX` requests; forwarding opaque `SignedCommand` bytes |
+| `wt-sentry` → `wt-turret` | Unix socket | File mode `0660` + `SO_PEERCRED` UID check | Forwarding opaque `SignedCommand` bytes (Sentry cannot originate actions) |
 | `wt-sentry` → `wt-core` | gRPC :50051 | mTLS (agent cert from CSR enrollment) | Event batches, heartbeat (incl. collector tier), `CommandStream`, IOC/rule bundle sync |
 | `wt-core` → `wt-frontal` | gRPC 127.0.0.1:50052 | Loopback + shared secret (mTLS optional) | `IncidentContext` → `Assessment` |
 | `wt-frontal` → LLM | HTTPS | API key | Schema-constrained inference |
@@ -199,7 +217,7 @@ Biological names are documentation and package codenames. Binaries keep function
 | Visual Cortex | `internal/core/console` + `web/` | Web Console |
 | Sensory Nerves | `wt-sentry` | Telemetry collection, local detection |
 | Motor Nerves | `wt-turret` | Privileged enforcement |
-| Reflex Arc | Sentry → Turret local path | Fast, bounded, local responses |
+| Flood Guard | nftables meters in `inet watchtower` | Kernel-level, per-source flood throttling; the only automatic local response |
 | Synapse | `pkg/synapse` | Protobuf contracts (remote + local IPC) |
 | Amygdala | `internal/sentry/decoy` (v1.x) | Canary files / decoy credentials |
 
@@ -248,6 +266,16 @@ Weights, multipliers and thresholds live in `core.yaml` and are covered by table
 | T1 Contain-network | 20–49 | `RATE_LIMIT`, `BAN_TEMP` on the affected agent | Core Automation Key | No |
 | T2 Fleet-contain | 50–79 | T1 + fleet-wide `BAN_TEMP` (escalating TTL) | Core Automation Key | No; notification sent |
 | T3 Destructive | ≥ 80, or any critical host-level rule | `KILL_PROCESS`, `ISOLATE_HOST`, `BAN_PERM` | Admin Approval Key | **Yes, always** |
+
+**Enforcement mode** (`core.yaml: enforcement_mode`, default **`audit`**):
+
+| Mode | Behaviour |
+|---|---|
+| `off` | No response is computed; detections and incidents only. |
+| `audit` | The policy engine runs and records every action it *would* take in `response_actions` (result `AUDIT`), but sends no command to any agent. Notifications say "would have …". |
+| `enforce` | Permitted actions are signed and sent as described below. |
+
+The mode is global, and changing it is an audited operator action. New installations start in `audit` so operators can review what WatchTower would do on their traffic before it acts.
 
 Policy rules, applied in order:
 1. **Immunity:** targets in the fleet whitelist or any self-preservation range are rejected regardless of tier.
@@ -316,7 +344,7 @@ Heartbeat every 30 s with agent version, rule/IOC bundle versions, collector tie
 
 - Tails `/var/log/auth.log` / `/var/log/secure`, nginx/Apache access logs and (optionally) journald via its export format; handles rotation (`IN_MOVE_SELF`, `IN_CREATE`) and truncation.
 - Parses into WES events (`Authentication`, `HTTP Activity`) **before** rule evaluation, so rules match fields rather than raw lines.
-- Agent-side rules with Sigma correlation (`event_count` over a `timespan`) drive the Reflex Arc, e.g. 5 failed SSH logins in 60 s → `BAN_TEMP 900s`.
+- Agent-side rules with Sigma correlation (`event_count` over a `timespan`) turn noisy single events into detections (e.g. 5 failed SSH logins in 60 s → `ssh_brute_force`). Detections go to Core; Sentry never triggers an action itself.
 
 #### 3.3.2 Read-only FIM + Package Verification (`internal/sentry/fim`)
 
@@ -342,7 +370,7 @@ The active tier is reported in every heartbeat and shown in the Web Console, so 
 
 - Parses `/proc/stat`, `/proc/meminfo`, `/proc/net/dev`, `/proc/net/tcp{,6}` directly; never spawns `ps`/`netstat`.
 - Verifies the Core signature on IOC bundles before loading them.
-- SHA-256 of new executables in watched temp directories (size-capped, default 64 MB) is checked against the IOC set. A match in `/tmp`, `/var/tmp`, `/dev/shm` → `REFLEX KILL_TEMP_MALWARE` request to Turret (Turret re-verifies). A match elsewhere → `critical` detection to Core, no local action.
+- SHA-256 of new executables in watched temp directories (size-capped, default 64 MB) is checked against the IOC set. Any match → `critical` detection to Core with the process entity. Core decides; a `KILL_TEMP_MALWARE` comes back as a signed command, and Turret re-verifies it. Sentry takes no local action.
 - Outbound connections to IOC IPs → `high` detection; with Tier A attribution the process entity is included.
 
 #### 3.3.5 Amygdala — Decoys (v1.x)
@@ -355,7 +383,7 @@ Canary files (fake `.env`, fake SSH private key, fake cloud credentials) watched
 
 **Privileges:** root (or `CAP_NET_ADMIN` + `CAP_KILL` + `CAP_DAC_READ_SEARCH` + `CAP_FOWNER`).
 **Socket:** `/run/watchtower/turret.sock`, `0660 root:watchtower`. Peer UID verified with `SO_PEERCRED`. **No network listeners.**
-**Design goal:** small, boring, heavily tested. Turret parses only two message types: `ReflexRequest` (locally authenticated) and `SignedCommand` (cryptographically authenticated).
+**Design goal:** small, boring, heavily tested. Turret parses one message type, `SignedCommand` (cryptographically authenticated). Apart from the kernel Flood Guard (§3.4.3), Turret never acts without a valid signed command.
 
 > **Phase 1 scope note:** `ISOLATE_HOST` / `RELEASE_HOST` and the WebAuthn signature scheme are deferred to a later phase. Phase 1 Turret verifies Ed25519 signatures only and answers the isolation actions with `FAILED` ("not implemented").
 
@@ -364,23 +392,20 @@ Canary files (fake `.env`, fake SSH private key, fake cloud credentials) watched
 1. **Self-preservation (hardcoded, unoverridable):** `127.0.0.0/8`, `::1`, link-local, all local interface addresses, default gateway(s), configured DNS resolvers, the Core endpoint, the WireGuard subnet, and the local whitelist file.
 2. **Origin rules:**
 
-| Action | `REFLEX` (from Sentry) | `SignedCommand` with Automation Key | `SignedCommand` with Admin Key |
-|---|---|---|---|
-| `RATE_LIMIT` (≤ 15 min) | ✔ | ✔ | ✔ |
-| `BAN_TEMP` | ✔ TTL ≤ 900 s | ✔ TTL ≤ 7 d | ✔ |
-| `KILL_TEMP_MALWARE` | ✔ after re-verification | ✔ | ✔ |
-| `UNBAN` | ✗ | ✔ | ✔ |
-| `BAN_PERM` | ✗ | ✗ | ✔ |
-| `KILL_PROCESS` | ✗ | ✗ | ✔ |
-| `ISOLATE_HOST` / `RELEASE_HOST` | ✗ | ✗ | ✔ |
+| Action | `SignedCommand` with Automation Key | `SignedCommand` with Admin Key |
+|---|---|---|
+| `RATE_LIMIT` (≤ 15 min) | ✔ | ✔ |
+| `BAN_TEMP` | ✔ TTL ≤ 7 d | ✔ |
+| `KILL_TEMP_MALWARE` | ✔ after re-verification | ✔ after re-verification |
+| `UNBAN` | ✔ (not of a permanent ban) | ✔ |
+| `BAN_PERM` | ✗ | ✔ |
+| `KILL_PROCESS` | ✗ | ✔ |
+| `ISOLATE_HOST` / `RELEASE_HOST` | ✗ | ✔ |
 
    - **Minimum prefix:** a ban target must be at least a `/16` (IPv4) or a `/32` (IPv6); anything wider is refused.
    - **Overlap rule:** any target that overlaps a protected range is refused, whether it is wider than, equal to or inside that range.
-   - **`REFLEX` bans are single addresses only.** The one exception is the local prefix limiter (item 4), which widens to the `/24` (`/64`) itself.
    - **Name-based immunity** (processes, hosts) applies only under fixed system prefixes (`/usr/bin/`, `/usr/sbin/`, `/usr/local/bin/`, `/usr/local/sbin/`, `/bin/`, `/sbin/`, `/opt/watchtower/`), so a process in a writable path cannot claim immunity by its name.
-3. **Reflex budget:** at most 50 distinct IPs banned via `REFLEX` per 10 minutes (configurable). Beyond that, Reflex bans are refused and a `high` detection is raised: either a large attack (Core's fleet logic takes over) or a compromised Sentry trying to use Turret as a DoS tool.
-4. **Local prefix limiter:** > 10 Reflex bans from one `/24` (`/64`) in 60 s → ban the prefix for the Reflex TTL instead of individual IPs. Protection stays active for all other traffic (no `LOG_ONLY` fallback).
-5. **`KILL_TEMP_MALWARE` re-verification:** Turret reads `/proc/<pid>/exe` itself, `filepath.Clean` + `EvalSymlinks`, requires a prefix of `/tmp/`, `/var/tmp/` or `/dev/shm/`, computes SHA-256 itself and requires it to be in the **Core-signed** IOC bundle on disk. Sentry's claimed hash is ignored. `memfd:` or `(deleted)` executables are refused locally and raised as `critical` for human decision.
+3. **`KILL_TEMP_MALWARE` re-verification:** Turret reads `/proc/<pid>/exe` itself, `filepath.Clean` + `EvalSymlinks`, requires a prefix of `/tmp/`, `/var/tmp/` or `/dev/shm/`, computes SHA-256 itself and requires it to be in the **Core-signed** IOC bundle on disk. Any hash in the command is ignored. `memfd:` or `(deleted)` executables are refused locally and raised as `critical` for human decision.
 
 #### 3.4.2 Enforcement (`internal/turret/nft`)
 
@@ -392,10 +417,24 @@ table inet watchtower {
   set ban6      { type ipv6_addr; flags interval, timeout; }
   set perm4     { type ipv4_addr; flags interval; }
   set perm6     { type ipv6_addr; flags interval; }
-  set ratelim4  { type ipv4_addr; flags timeout; }
+  set ratelim4  { type ipv4_addr; flags timeout; }   # Core-signed RATE_LIMIT targets
   set ratelim6  { type ipv6_addr; flags timeout; }
   set allow4    { type ipv4_addr; flags interval; }   # self-preservation, mirrored
   set allow6    { type ipv6_addr; flags interval; }
+  # Per-source meters (dynamic: the kernel adds and expires entries itself)
+  set rlmeter4  { type ipv4_addr; flags dynamic, timeout; timeout 60s; }
+  set rlmeter6  { type ipv6_addr; flags dynamic, timeout; timeout 60s; }
+  set fgsyn4    { type ipv4_addr; flags dynamic, timeout; timeout 60s; }
+  set fgsyn6    { type ipv6_addr; flags dynamic, timeout; timeout 60s; }
+  set fgpkt4    { type ipv4_addr; flags dynamic, timeout; timeout 60s; }
+  set fgpkt6    { type ipv6_addr; flags dynamic, timeout; timeout 60s; }
+  set fgconn4   { type ipv4_addr; flags dynamic; }
+  set fgconn6   { type ipv6_addr; flags dynamic; }
+  # Offenders, one set per meter so every event names what was exceeded
+  set offsyn4   { type ipv4_addr; flags dynamic, timeout; timeout <block_for>; }
+  set offpkt4   { type ipv4_addr; flags dynamic, timeout; timeout <block_for>; }
+  set offconn4  { type ipv4_addr; flags dynamic, timeout; timeout <block_for>; }
+  set offsyn6 / offpkt6 / offconn6   (same, ipv6_addr)
 
   chain input {
     type filter hook input priority -10; policy accept;
@@ -405,27 +444,58 @@ table inet watchtower {
     ip6 saddr @perm6 drop
     ip  saddr @ban4  drop
     ip6 saddr @ban6  drop
-    ip  saddr @ratelim4 limit rate over 2/second burst 4 packets drop
-    ip6 saddr @ratelim6 limit rate over 2/second burst 4 packets drop
+    ip  saddr @ratelim4 update @rlmeter4 { ip  saddr limit rate over 2/second burst 4 packets } drop
+    ip6 saddr @ratelim6 update @rlmeter6 { ip6 saddr limit rate over 2/second burst 4 packets } drop
+    # Flood Guard (§3.4.3); "drop" only in enforce mode
+    ip saddr @offsyn4  update @offsyn4  { ip saddr } drop                # enforce only
+    ip saddr @offpkt4  update @offpkt4  { ip saddr } drop                # enforce only
+    ip saddr @offconn4 update @offconn4 { ip saddr } drop                # enforce only
+    tcp flags syn ct state new update @fgsyn4 { ip saddr limit rate over <syn_rate>/second burst <syn_burst> packets } update @offsyn4 { ip saddr } [drop]
+    update @fgpkt4 { ip saddr limit rate over <pkt_rate>/second burst <pkt_burst> packets } update @offpkt4 { ip saddr } [drop]
+    ct state new add @fgconn4 { ip saddr ct count over <conn_limit> } update @offconn4 { ip saddr } [drop]
+    …the same six rules for ip6
   }
 }
 ```
 
 - **Bans never shorten.** Every mutation is recorded as (span, absolute deadline) and the affected set is rewritten from a sweep over all records, so overlapping records keep the later deadline and a narrower or shorter ban cannot cut a longer one.
-- The rate-limit bucket is **aggregate**: the `ratelim` sets throttle all matching traffic against one shared bucket per set, not per source address.
+- `RATE_LIMIT` is **per source**: each address in `ratelim4/6` has its own 2 pps bucket in `rlmeter4/6`.
 - Changes are applied as nftables transactions through `google/nftables` (atomic; no shelling out).
 - Priority `-10` runs before the default filter chains (priority 0), including the iptables-nft compatibility tables, so bans apply regardless of existing `ESTABLISHED,RELATED` accepts.
 - `allow4/allow6` are evaluated first, so even a bug that inserts a self-preservation address into a ban set cannot cut management access.
 - **Rollback:** `wt-turret panic-flush` deletes `table inet watchtower`. This is the documented emergency procedure and is tested in CI. Bans are persisted in `<state_dir>/bans.json` and re-applied on start (it is authoritative after a restart), so the full procedure is: stop `wt-turret`, run `wt-turret panic-flush --clear-state` (which also renames `bans.json` to `bans.json.flushed-<unix>` for forensics), fix the cause, start again. Without `--clear-state` the bans, including the one that caused the lockout, return on the next start.
 - Hosts using legacy iptables only (no nftables kernel support) are out of scope for v1.
 
-#### 3.4.3 Process Termination
+#### 3.4.3 Flood Guard (`internal/turret/flood`)
+
+The one automatic local response. It exists because waiting for Core during a flood is too slow. It is constrained so that it cannot become a general-purpose local decision-maker:
+
+- **Kernel only, rate only.** It counts per-source rates in nftables meters. Turret's userspace never inspects packets and payload is never compared. Three meters, each per source address:
+  - new TCP connections per second (`syn_rate`/`syn_burst`)
+  - packets per second (`pkt_rate`/`pkt_burst`)
+  - concurrent connections (`conn_limit`)
+- **Allow set first.** Protected addresses (§3.4.1) are accepted before any meter, so self-preservation still holds.
+- **Self-expiring.** A source over a threshold enters that meter's offenders set (`offsyn`, `offpkt`, `offconn`; IPv4 and IPv6) with timeout `block_for` (default 60 s). In `enforce` mode its packets are dropped, and each dropped packet refreshes the entry, so the block lasts while the flood lasts plus `block_for`. Nothing is permanent and nothing is written to `bans.json`.
+- **Modes:** `off` (meters not installed), `audit` (**default**: offenders are recorded and reported, nothing is dropped), `enforce`.
+- **Reporting.** Turret polls the offenders sets (every 1 s). It emits an `offender_started` event when a source appears and an `offender_ended` event when its entry expires. Both carry the source, the meter, the mode and the first and last time seen. Until Phase 3 these go to the log and a bounded `<state_dir>/flood-events.jsonl`; from Phase 3 they are forwarded to Core as `detection_finding` events. Core may then decide a longer ban.
+- **Policy, not judgement.** Thresholds and mode are configuration today. In Phase 3, Core pushes them as a signed policy. Defaults are deliberately high:
+
+  | Setting | Default |
+  |---|---|
+  | `syn_rate` / `syn_burst` | 100 / 200 per second |
+  | `pkt_rate` / `pkt_burst` | 5000 / 10000 per second |
+  | `conn_limit` | 512 |
+  | `block_for` | 60 s |
+
+  These are high so that a busy NAT/CGNAT address serving many real users is not throttled in normal use.
+
+#### 3.4.4 Process Termination
 
 - `KILL_PROCESS` carries `pid`, expected `exe` path and expected `start_time` (field 22 of `/proc/<pid>/stat`). Turret verifies both immediately before `SIGKILL`, which defeats PID reuse. Prefer `pidfd_open` + `pidfd_send_signal` (Linux ≥ 5.3) to close the remaining race.
 - PID 1, kernel threads, WatchTower's own processes, `sshd` master, `wireguard`/`wg-quick` and the Core connection path are immune.
 - `KILL_TEMP_MALWARE` additionally sets the binary to `0600` (no execute) for forensics; it is not deleted.
 
-#### 3.4.4 Host Isolation (`ISOLATE_HOST`)
+#### 3.4.5 Host Isolation (`ISOLATE_HOST`)
 
 Adds an `isolate` chain to the same table: drop all input/output except the self-preservation set, the WireGuard interface and the Core endpoint. Isolation persists across Turret restarts (state file) until `RELEASE_HOST`, which also requires the admin key. Because isolation is the most outage-prone action, it is admin-signed only and has its own network-namespace CI test.
 
@@ -526,7 +596,7 @@ message Event {
 - Rules live in `rules/` in the repository, one YAML file per rule, using the **Sigma** format (detection blocks) plus **Sigma correlation rules** (`event_count`, `value_count`, `temporal`) for thresholds and sequences.
 - WatchTower supports a documented subset of Sigma modifiers (`contains`, `startswith`, `endswith`, `re`, `cidr`, `all`). Unsupported features fail the rule at load time, never silently.
 - Field names in rules map to WES fields through a single mapping file (`rules/wes-mapping.yaml`).
-- Each rule carries WatchTower extensions under `custom`: `scope: agent | core`, `requires: [process_exec]`, optional `response: {action: BAN_TEMP, ttl: 900s}` (agent rules only, within Reflex limits).
+- Each rule carries WatchTower extensions under `custom`: `scope: agent | core`, `requires: [process_exec]`, optional `response: {action: BAN_TEMP, ttl: 900s}`. This is only a *recommendation* carried in the detection; Core's policy engine decides whether, and how, to act.
 - **Every rule ships with test events**: positive samples that must match and negative samples (the false-positive regression corpus) that must not. `make test-rules` runs them in CI.
 - Core distributes agent rule bundles signed with the Core Automation Key (v1.x); in v1, agent rules are embedded in the Sentry binary.
 
@@ -930,13 +1000,14 @@ Ordering principle: **ship the smallest thing that is already better than Fail2B
 | Phase | Version | Focus | Deliverables | Verification gate |
 |---|---|---|---|---|
 | **0** | v0.3.0 | Contracts | `pkg/synapse` (`event.proto`, `command.proto`, `agent.proto`, `ipc.proto`), `deployments/sql/` migrations with roles, `rules/` layout + `wes-mapping.yaml`, Makefile targets | `buf lint` / `buf generate` run cleanly; `CGO_ENABLED=0 go build ./...`; migrations apply on a fresh TimescaleDB in CI |
-| **1** | v0.4.0 | `wt-turret` safety first | Safety layer, origin table, reflex budget, signature + replay verification, nftables table, `panic-flush`, verified kill | `go test -race ./internal/turret/...` 100% pass, including netns tests: self-ban refusal, path traversal refusal, forged/replayed/expired command refusal, `panic-flush` restores connectivity |
-| **2** | v0.5.0 | `wt-sentry` | LogWatcher → WES, Sigma subset engine + correlation, FIM + package verification, `/proc` metrics, Tier C process collector, Reflex Arc, enrollment client | Rule regression corpus (WordPress `.php`, `;` query strings, single SSH typo) passes; FIM ignores package-consistent upgrades in a Debian container test |
-| **3** | v0.6.0 | `wt-core` + demo stack | CSR enrollment, ingest, core rules, entity correlator, scoring/tiers, **Fleet Immunity**, Policy Engine, Automation Key signing, audit chain, `deployments/demo/` with attack simulator (§3.6.4) | E2E on the demo stack (3 agents): brute force on agent 1 → fleet ban on agents 2–3 within 10 s; whitelisted IP never banned; Core cannot produce a valid T3 command |
-| **4** | v0.7.0 | `wt-cli` + HITL | Connect API, CLI, admin keys, approvals, ntfy notifications, audit anchoring | Approval E2E: `KILL_PROCESS` executes only with admin signature; tampered payload refused |
-| **5** | v0.8.0 | **Web Console** (Visual Cortex) | Svelte SPA embedded in `wt-core`: Overview, Incidents, Fleet, Response, Approvals, Detections, Audit; passkey login and passkey approvals; live feed; `make ui`, `make demo` | Playwright E2E on the demo stack with a virtual authenticator: login, approve a `KILL_PROCESS`, reject a tampered payload; XSS corpus (`<script>`, `javascript:` URLs, ANSI codes in log lines) renders as inert text; zero CSP violations; README screenshots and demo GIF regenerated from the demo stack |
-| **6** | v0.9.0 | Process telemetry depth | Tier B (auditd), Tier A (eBPF exec/connect) | Short-lived process (`sh -c 'curl …'`) detected on Tier A/B; tier reported in heartbeat |
-| **7** | v0.10.0 | Hippocampus | Continuous aggregates, median/MAD baselines, cold-start logic | Synthetic 6-week dataset: no anomaly signals before thresholds, injected spikes detected, `MAD = 0` handled |
+| **1** | v0.4.0 ✅ | `wt-turret` safety first | Safety layer, origin table, reflex budget (removed in 1.5), signature + replay verification, nftables table, `panic-flush`, verified kill | `go test -race ./internal/turret/...` 100% pass, including netns tests: self-ban refusal, path traversal refusal, forged/replayed/expired command refusal, `panic-flush` restores connectivity |
+| **1.5** | v0.5.0 | Core decides, Flood Guard | Reflex path removed (proto, engine, safety, config); Flood Guard meters + offenders sets with `off`/`audit`/`enforce` (default `audit`); per-source `RATE_LIMIT`; offender events (log + bounded JSONL) | netns: a SYN/packet/connection flood from one peer is recorded but not dropped in `audit`, dropped in `enforce` while a second peer and protected addresses are unaffected; entries expire after `block_for`; per-source `RATE_LIMIT` throttles one peer without the other |
+| **2** | v0.6.0 | `wt-sentry` | LogWatcher → WES, Sigma subset engine + correlation, FIM + package verification, `/proc` metrics, Tier C process collector, enrollment client (sensor only: no local actions) | Rule regression corpus (WordPress `.php`, `;` query strings, single SSH typo) passes; FIM ignores package-consistent upgrades in a Debian container test |
+| **3** | v0.7.0 | `wt-core` + demo stack | CSR enrollment, ingest, core rules, entity correlator, scoring/tiers, **Fleet Immunity**, Policy Engine, Automation Key signing, audit chain, `deployments/demo/` with attack simulator (§3.6.4) | E2E on the demo stack (3 agents): brute force on agent 1 → fleet ban on agents 2–3 within 10 s; whitelisted IP never banned; Core cannot produce a valid T3 command |
+| **4** | v0.8.0 | `wt-cli` + HITL | Connect API, CLI, admin keys, approvals, ntfy notifications, audit anchoring | Approval E2E: `KILL_PROCESS` executes only with admin signature; tampered payload refused |
+| **5** | v0.9.0 | **Web Console** (Visual Cortex) | Svelte SPA embedded in `wt-core`: Overview, Incidents, Fleet, Response, Approvals, Detections, Audit; passkey login and passkey approvals; live feed; `make ui`, `make demo` | Playwright E2E on the demo stack with a virtual authenticator: login, approve a `KILL_PROCESS`, reject a tampered payload; XSS corpus (`<script>`, `javascript:` URLs, ANSI codes in log lines) renders as inert text; zero CSP violations; README screenshots and demo GIF regenerated from the demo stack |
+| **6** | v0.10.0 | Process telemetry depth | Tier B (auditd), Tier A (eBPF exec/connect) | Short-lived process (`sh -c 'curl …'`) detected on Tier A/B; tier reported in heartbeat |
+| **7** | v0.11.0 | Hippocampus | Continuous aggregates, median/MAD baselines, cold-start logic | Synthetic 6-week dataset: no anomaly signals before thresholds, injected spikes detected, `MAD = 0` handled |
 | **8** | v1.0.0 | Hardening & release | Installer, systemd units (with sandboxing), upgrade path, docs, threat model review | Fresh-install-to-first-detection < 15 min on Debian 12 and Rocky 9 |
 | **9** | v1.1+ | Frontal, Midbrain, Amygdala | Optional AI analyst (narratives shown in the console), CTI feeds + signed IOC bundles, decoys, optional Grafana dashboards | Prompt-injection corpus → never an action outside the allow-list; 100k-IOC lookup benchmark < 1 µs |
 
@@ -971,17 +1042,20 @@ README roadmap and CHANGELOG must be updated in the same change that starts Phas
 **In scope:**
 - Internet attackers against exposed services (SSH, web): brute force, scanning, exploitation followed by payload download/execution, C2 beacons to known infrastructure.
 - Compromise of an unprivileged service account (e.g. `www-data`) on a protected host.
-- Compromise of `wt-sentry` (it parses attacker-controlled input): bounded to Reflex-level actions within budget, plus fake telemetry from that host.
+- Compromise of `wt-sentry` (it parses attacker-controlled input): it can send fake telemetry from that host and drop or delay signed commands it forwards, but it cannot cause any action. Turret no longer accepts unsigned requests.
 - Compromise of Core: bounded to reversible network actions and misleading dashboards; no destructive actions without admin signature.
 
 **Out of scope / known limitations:**
 - **Root on a protected host** can stop Sentry and Turret, edit their config and remove the nftables table. WatchTower turns this into a signal (heartbeat loss, FIM on `/etc/watchtower`, `DEAD` agent alert) but cannot prevent it.
 - **Clock jumps:** a backward wall-clock jump past a command's `expires_at` can revive already-pruned replay ids, so an old signed command could be accepted again if it is still within its (clock-relative) validity window.
-- **Unwritable state dir at runtime:** Reflex bans still apply (with a warning) but every signed command fails (`FAILED`) because the replay record cannot be persisted. This fails closed; use `wt-turret panic-flush` to recover.
+- **Unwritable state dir at runtime:** the Flood Guard keeps working (it lives in the kernel), but every signed command fails (`FAILED`) because the replay record cannot be persisted. This fails closed; use `wt-turret panic-flush` to recover.
 - **Kernel rootkits** and eBPF-aware evasion.
 - **Tier C visibility** misses short-lived processes and cannot attribute other users' connections to processes; operators should be told this, which is why the tier is shown everywhere.
 - **Encrypted application traffic** is visible only through application logs; there is no TLS interception or packet capture.
 - **Fake telemetry** from a compromised agent can raise fleet reputation for an IP. It is bounded by T2 actions (temporary bans with TTL) and by the fleet whitelist; destructive actions always involve a human.
 - **LLM output** is untrusted text; it can be wrong or manipulated, which is why it is advisory-only and allow-listed.
 - **Stale allow list after a failed nftables update:** if the kernel rejects an allow-list update, an address newly added to the protected set can still match an existing ban until a retry succeeds. Turret retries after 1 s with backoff up to 60 s, and it applies the new set to every new ban in the meantime. `panic-flush` is the manual override.
+- **Volumetric DDoS** that saturates the uplink cannot be stopped on the host; it must be handled upstream (provider scrubbing, a CDN/DDoS service). The Flood Guard targets SYN, packet and connection floods that reach the host, and brute-force style repetition.
+- **Flood Guard collateral:** one source address can be shared by many real users (NAT, CGNAT, corporate proxies). The defaults are high to avoid throttling them, and `audit` mode shows what `enforce` would do before it is switched on.
+- **No Core, no response:** apart from the Flood Guard, nothing is enforced while Core is unreachable. Core high availability is a later-phase concern.
 - **Scale:** designed for ~200 agents on one Core. Horizontal Core scaling is not planned for v1.
