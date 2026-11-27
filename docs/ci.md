@@ -53,12 +53,12 @@ docker stop wt-pg
 - `concurrency` cancels a superseded run when a PR is pushed again.
 - Every job has a `timeout-minutes`.
 
-## Branch protection (repository setting, done by a maintainer)
+## Branch protection
 
-CI only blocks a merge if `master` requires it. In **Settings → Branches → Add rule** for `master`:
+`master` is protected (applied through the GitHub API). To check it: `gh api repos/EForce11/WatchTower/branches/master/protection`.
 
-- Require a pull request before merging.
-- Require status checks to pass, and mark these as required:
+- A pull request is required to merge. No approving review is required, because a single maintainer cannot approve their own PR.
+- These status checks must pass. Each is bound to the GitHub Actions app, so a commit status from anywhere else cannot satisfy it:
   - `Lint`
   - `Tidy`
   - `Proto`
@@ -69,8 +69,13 @@ CI only blocks a merge if `master` requires it. In **Settings → Branches → A
   - `Migrations (PostgreSQL 16)`
   - `Netns`
   - `Analyze (go)`
-- Require branches to be up to date before merging.
-- Do not allow bypassing, and block force pushes and deletions.
+  - `Analyze (actions)`
+- The branch must be up to date with `master` before merging.
+- All review conversations must be resolved.
+- History must be linear (the repository only allows rebase merges).
+- The rule applies to administrators too. Force pushes and deletion of `master` are blocked.
+
+Renaming a CI job renames its check. Update the required list in the same change, or every PR waits forever for a check that no longer exists.
 
 ## Known gaps
 
