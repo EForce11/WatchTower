@@ -19,6 +19,7 @@ import (
 	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/EForce11/WatchTower/internal/testenv"
 	"github.com/EForce11/WatchTower/internal/turret/ioc"
 	"github.com/EForce11/WatchTower/internal/turret/verify"
 	synapsev1 "github.com/EForce11/WatchTower/pkg/synapse/v1"
@@ -375,7 +376,7 @@ func TestKillTempMalwareRejectsBadTempDirs(t *testing.T) {
 func TestKillTempMalwareMemfd(t *testing.T) {
 	fd, err := unix.MemfdCreate("evil", 0)
 	if err != nil {
-		t.Skipf("memfd_create: %v", err)
+		testenv.Skip(t, fmt.Sprintf("memfd_create: %v", err))
 	}
 	mf := os.NewFile(uintptr(fd), "memfd")
 	t.Cleanup(func() { _ = mf.Close() })
@@ -389,10 +390,10 @@ func TestKillTempMalwareMemfd(t *testing.T) {
 	}
 	cmd, done, err := startE(t, fmt.Sprintf("/proc/%d/fd/%d", os.Getpid(), fd))
 	if err != nil {
-		t.Skipf("exec from memfd not permitted: %v", err)
+		testenv.Skip(t, fmt.Sprintf("exec from memfd not permitted: %v", err))
 	}
 	if i, err := Inspect(cmd.Process.Pid); err != nil || !i.Memfd {
-		t.Skipf("exe not memfd-backed: %+v %v", i, err)
+		testenv.Skip(t, fmt.Sprintf("exe not memfd-backed: %+v %v", i, err))
 	}
 	if _, err := KillTempMalware(cmd.Process.Pid, iocSet(t), DefaultTempDirs); !errors.Is(err, ErrMemfdOrDeleted) {
 		t.Fatalf("err = %v", err)

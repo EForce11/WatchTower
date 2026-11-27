@@ -20,6 +20,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"github.com/EForce11/WatchTower/internal/testenv"
 	"github.com/EForce11/WatchTower/internal/turret/config"
 	"github.com/EForce11/WatchTower/internal/turret/ioc"
 	"github.com/EForce11/WatchTower/internal/turret/nft"
@@ -561,7 +562,7 @@ func TestReplayRecordFailureIsFailedAndDoesNotAct(t *testing.T) {
 	}
 	defer func() { _ = os.Chmod(dir, 0o700) }()
 	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
+		testenv.Skip(t, "root ignores directory permissions")
 	}
 	e.expect(e.auto("c1", synapsev1.Action_ACTION_BAN_TEMP, "203.0.113.5", 60), failedRes)
 	if e.fw.Has(nft.KindBan, pfx("203.0.113.5/32")) {
@@ -814,7 +815,7 @@ func TestKillNotExecutedWhenRecordFails(t *testing.T) {
 	e := newEnv(t)
 	dir := filepath.Dir(e.replayP)
 	if os.Geteuid() == 0 {
-		t.Skip("root ignores directory permissions")
+		testenv.Skip(t, "root ignores directory permissions")
 	}
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
