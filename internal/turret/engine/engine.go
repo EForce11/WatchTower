@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -499,14 +500,24 @@ func (e *Engine) ban(c *cmd, p netip.Prefix) outcome {
 }
 
 // unban removes p from the firewall and the state; e.mu is held.
+// unban persists the removal before touching the firewall. bans.json is
+// authoritative on restart, so lifting a ban the state file still holds would
+// let the next start re-apply it after the caller was told it was removed.
+// Either step failing leaves state and kernel as they were.
 func (e *Engine) unban(p netip.Prefix) outcome {
-	if err := e.d.FW.Remove(p); err != nil {
-		return failed("firewall: %v", err)
-	}
+	prev := maps.Clone(e.store.recs)
 	e.store.deletePrefix(p)
 	if err := e.save(); err != nil {
+		e.store.recs = prev
 		e.d.Log.Error("persist ban state", "err", err)
-		return applied("unban %s applied; state not persisted: %v", p, err)
+		return failed("unban %s not applied: state not persisted: %v", p, err)
+	}
+	if err := e.d.FW.Remove(p); err != nil {
+		e.store.recs = prev
+		if perr := e.save(); perr != nil {
+			e.d.Log.Error("restore ban state after failed unban", "err", perr)
+		}
+		return failed("firewall: %v", err)
 	}
 	return applied("unban %s", p)
 }

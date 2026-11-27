@@ -894,6 +894,50 @@ func TestPersistFailureRetriedOnNextMutationAndClose(t *testing.T) {
 	}
 }
 
+// An UNBAN whose state save fails must not lift the ban: otherwise the next
+// restart re-applies bans.json and the ban comes back while the caller was
+// told it was removed.
+func TestUnbanNotAppliedWhenStateSaveFails(t *testing.T) {
+	e := newEnv(t)
+	e.expect(e.admin("p1", synapsev1.Action_ACTION_BAN_PERM, "203.0.113.5", 0), okRes)
+	away := e.state + ".away"
+	if err := os.Rename(e.state, away); err != nil {
+		t.Fatal(err)
+	}
+	e.expect(e.admin("u1", synapsev1.Action_ACTION_UNBAN, "203.0.113.5", 0), failedRes)
+	if !e.fw.Has(nft.KindPerm, pfx("203.0.113.5/32")) {
+		t.Fatal("firewall ban lifted although the state save failed")
+	}
+	if err := os.Rename(away, e.state); err != nil {
+		t.Fatal(err)
+	}
+	// Firewall and state agree: a retry with a new command unbans cleanly.
+	e.expect(e.admin("u2", synapsev1.Action_ACTION_UNBAN, "203.0.113.5", 0), okRes)
+	if e.fw.Has(nft.KindPerm, pfx("203.0.113.5/32")) {
+		t.Fatal("perm ban still present after a successful unban")
+	}
+	b, _ := os.ReadFile(filepath.Join(e.state, stateFile))
+	if strings.Contains(string(b), "203.0.113.5/32") {
+		t.Fatalf("unbanned record still in state: %s", b)
+	}
+}
+
+// If the firewall rejects the UNBAN after the state was saved, the record is
+// restored so state and kernel keep agreeing.
+func TestUnbanFirewallFailureRestoresState(t *testing.T) {
+	e := newEnv(t)
+	e.expect(e.admin("p1", synapsev1.Action_ACTION_BAN_PERM, "203.0.113.5", 0), okRes)
+	e.fw.FailNext(errors.New("netlink down"))
+	e.expect(e.admin("u1", synapsev1.Action_ACTION_UNBAN, "203.0.113.5", 0), failedRes)
+	if !e.fw.Has(nft.KindPerm, pfx("203.0.113.5/32")) {
+		t.Fatal("ban missing after failed firewall remove")
+	}
+	b, _ := os.ReadFile(filepath.Join(e.state, stateFile))
+	if !strings.Contains(string(b), "203.0.113.5/32") {
+		t.Fatalf("record dropped from state although the firewall still bans it: %s", b)
+	}
+}
+
 func TestRestartUnbanOfMergedImportedSpan(t *testing.T) {
 	e := newEnv(t)
 	e.expect(e.admin("p1", synapsev1.Action_ACTION_BAN_PERM, "203.0.113.1", 0), okRes)
