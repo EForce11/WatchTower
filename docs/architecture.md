@@ -29,7 +29,9 @@ Response decisions move to Core. Agents become sensors and executors; the only l
    - **Turret:** the Flood Guard defaults to `audit`. Offenders are recorded and reported, but not dropped.
    - Enforcement starts only when an operator switches the mode to `enforce`.
 4. **Per-source `RATE_LIMIT`.** A Core-signed `RATE_LIMIT` now throttles each listed source against its own meter instead of one shared bucket.
-5. **Roadmap.** Phase 1.5 (v0.5.0) delivers the above; later phases shift by one minor version.
+5. **Container traffic covered.** Bans and the Flood Guard are also installed in a `forward` base chain, so Docker/Podman-published services are protected (§3.4.2).
+6. **Capabilities and degraded modes** (§3.4.6). Turret checks nf_tables, the Flood Guard expressions and pidfd itself. It degrades by name (observe-only, Flood Guard off, no kill) instead of failing or silently weakening, and `wt-turret doctor` shows the result.
+7. **Roadmap.** Phase 1.5 (v0.5.0) delivers the above; later phases shift by one minor version.
 
 ### v3.1 → v3.2 (XDR Core & Trust-Model Corrections)
 
@@ -464,7 +466,8 @@ table inet watchtower {
 - Priority `-10` runs before the default filter chains (priority 0), including the iptables-nft compatibility tables, so bans apply regardless of existing `ESTABLISHED,RELATED` accepts.
 - `allow4/allow6` are evaluated first, so even a bug that inserts a self-preservation address into a ban set cannot cut management access.
 - **Rollback:** `wt-turret panic-flush` deletes `table inet watchtower`. This is the documented emergency procedure and is tested in CI. Bans are persisted in `<state_dir>/bans.json` and re-applied on start (it is authoritative after a restart), so the full procedure is: stop `wt-turret`, run `wt-turret panic-flush --clear-state` (which also renames `bans.json` to `bans.json.flushed-<unix>` for forensics), fix the cause, start again. Without `--clear-state` the bans, including the one that caused the lockout, return on the next start.
-- Hosts using legacy iptables only (no nftables kernel support) are out of scope for v1.
+- **Forwarded traffic (containers) is covered too.** The same allow, perm, ban, ratelim and Flood Guard rules are installed in a second base chain, `forward` (hook forward, priority `-10`, policy accept). Traffic to Docker/Podman-published ports is DNAT-ed in prerouting and then forwarded, not delivered to `input`, so without this chain a banned address would still reach every containerised service. The `forward` chain is always installed; on a host without containers it matches nothing. It runs before the container runtime's own filter rules (priority 0), and the source address it sees is the real client address.
+- Hosts whose kernel has no nf_tables support are out of scope for v1 (see §3.4.6).
 
 #### 3.4.3 Flood Guard (`internal/turret/flood`)
 
@@ -500,6 +503,25 @@ The one automatic local response. It exists because waiting for Core during a fl
 Adds an `isolate` chain to the same table: drop all input/output except the self-preservation set, the WireGuard interface and the Core endpoint. Isolation persists across Turret restarts (state file) until `RELEASE_HOST`, which also requires the admin key. Because isolation is the most outage-prone action, it is admin-signed only and has its own network-namespace CI test.
 
 ---
+
+#### 3.4.6 Capabilities and Degraded Modes
+
+Turret checks what it can actually do itself, at startup and on demand. It does not rely on Sentry for this: Sentry is unprivileged and cannot measure it, and Sentry is not trusted.
+
+| Check | How | If it fails |
+|---|---|---|
+| nf_tables usable, with permission | create and delete a probe table in one transaction | **observe-only**: no table is installed; every network action returns `FAILED "enforcement unavailable: <reason>"` |
+| Flood Guard expressions (dynamic set, `limit`, `ct count`) | install the probe table with one rule of each kind | Flood Guard forced to `off`, with the reason; bans still work |
+| `pidfd_open` / `pidfd_send_signal` (Linux ≥ 5.3) | `pidfd_open(getpid())` | `KILL_PROCESS` / `KILL_TEMP_MALWARE` return `REFUSED_SAFETY "unsupported on this kernel"`. There is no fallback to `kill(2)`, because that would reintroduce PID reuse. |
+
+The result is logged at startup and printed by `wt-turret doctor`, which runs every check and exits `0` (full), `1` (degraded) or `2` (cannot run). From Phase 3 it is also reported to Core with the heartbeat. Turret never fails silently into a weaker mode: every degraded capability is named.
+
+**Platform expectations for Turret** (kernel features, not distributions):
+- **Full support:** Linux ≥ 5.3 with nf_tables. That covers Debian 11+, Ubuntu 20.04+, RHEL/Rocky 9, current Fedora and Arch.
+- **Bans only, no kill:** Linux 4.18–5.2 (Debian 10, RHEL/Rocky 8).
+- **Observe-only:** containers without `CAP_NET_ADMIN` in their own network namespace (OpenVZ, unprivileged LXC). Turret cannot enforce there; Sentry still works.
+
+The binary is static (`CGO_ENABLED=0`) and needs no `nft` userland tool, so the C library and the firewall front-end in use (iptables, nft, firewalld, ufw) do not matter.
 
 ### 3.5 `wt-cli`
 
@@ -1001,7 +1023,7 @@ Ordering principle: **ship the smallest thing that is already better than Fail2B
 |---|---|---|---|---|
 | **0** | v0.3.0 | Contracts | `pkg/synapse` (`event.proto`, `command.proto`, `agent.proto`, `ipc.proto`), `deployments/sql/` migrations with roles, `rules/` layout + `wes-mapping.yaml`, Makefile targets | `buf lint` / `buf generate` run cleanly; `CGO_ENABLED=0 go build ./...`; migrations apply on a fresh TimescaleDB in CI |
 | **1** | v0.4.0 ✅ | `wt-turret` safety first | Safety layer, origin table, reflex budget (removed in 1.5), signature + replay verification, nftables table, `panic-flush`, verified kill | `go test -race ./internal/turret/...` 100% pass, including netns tests: self-ban refusal, path traversal refusal, forged/replayed/expired command refusal, `panic-flush` restores connectivity |
-| **1.5** | v0.5.0 | Core decides, Flood Guard | Reflex path removed (proto, engine, safety, config); Flood Guard meters + offenders sets with `off`/`audit`/`enforce` (default `audit`); per-source `RATE_LIMIT`; offender events (log + bounded JSONL) | netns: a SYN/packet/connection flood from one peer is recorded but not dropped in `audit`, dropped in `enforce` while a second peer and protected addresses are unaffected; entries expire after `block_for`; per-source `RATE_LIMIT` throttles one peer without the other |
+| **1.5** | v0.5.0 | Core decides, Flood Guard | Reflex path removed (proto, engine, safety, config); Flood Guard meters + offenders sets with `off`/`audit`/`enforce` (default `audit`); per-source `RATE_LIMIT`; `forward` chain for container traffic; capability checks, degraded modes and `wt-turret doctor`; offender events (log + bounded JSONL) | netns: a SYN/packet/connection flood from one peer is recorded but not dropped in `audit`, dropped in `enforce` while a second peer and protected addresses are unaffected; entries expire after `block_for`; per-source `RATE_LIMIT` throttles one peer without the other; a ban blocks a peer reaching a forwarded (DNAT) service; `doctor` reports observe-only when nf_tables is unavailable |
 | **2** | v0.6.0 | `wt-sentry` | LogWatcher → WES, Sigma subset engine + correlation, FIM + package verification, `/proc` metrics, Tier C process collector, enrollment client (sensor only: no local actions) | Rule regression corpus (WordPress `.php`, `;` query strings, single SSH typo) passes; FIM ignores package-consistent upgrades in a Debian container test |
 | **3** | v0.7.0 | `wt-core` + demo stack | CSR enrollment, ingest, core rules, entity correlator, scoring/tiers, **Fleet Immunity**, Policy Engine, Automation Key signing, audit chain, `deployments/demo/` with attack simulator (§3.6.4) | E2E on the demo stack (3 agents): brute force on agent 1 → fleet ban on agents 2–3 within 10 s; whitelisted IP never banned; Core cannot produce a valid T3 command |
 | **4** | v0.8.0 | `wt-cli` + HITL | Connect API, CLI, admin keys, approvals, ntfy notifications, audit anchoring | Approval E2E: `KILL_PROCESS` executes only with admin signature; tampered payload refused |
