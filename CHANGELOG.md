@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.4.0] — 2026-11-27
+
 Phase 1 (Turret) of the v3.2 architecture.
 
 ### Added
@@ -23,6 +27,10 @@ Phase 1 (Turret) of the v3.2 architecture.
 ### Changed
 - `wt-turret` added to the GoReleaser builds
 - Phase 1 defers `ISOLATE_HOST` / `RELEASE_HOST` and WebAuthn signatures
+- Ban expiry is driven by Turret's own set rewrites; kernel timeouts carry a 5 s backstop margin
+- `bans.json` is authoritative on restart; an unban is persisted before it leaves the firewall
+- A failed allow-list update is retried with backoff (1 s up to 60 s)
+- `panic-flush --clear-state` moves `bans.json` aside so a restart does not re-apply bans
 
 ---
 
@@ -102,7 +110,8 @@ Phase 0 (Contracts) of the v3.2 architecture.
 
 ---
 
-[Unreleased]: https://github.com/EForce11/WatchTower/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/EForce11/WatchTower/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/EForce11/WatchTower/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/EForce11/WatchTower/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/EForce11/WatchTower/compare/v0.2.0-alpha...v0.2.0
 [0.2.0-alpha]: https://github.com/EForce11/WatchTower/compare/v0.1.0...v0.2.0-alpha
