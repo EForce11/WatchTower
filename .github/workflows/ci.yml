@@ -1,3 +1,6 @@
+# CI gates for WatchTower. What each job guarantees, and the environment it
+# assumes, is documented in docs/ci.md. Third-party actions are pinned to a
+# commit SHA (the tag is in the trailing comment); Dependabot keeps them fresh.
 name: CI
 
 on:
@@ -6,32 +9,57 @@ on:
   pull_request:
     branches: [master]
 
+# Least privilege for the GITHUB_TOKEN: every job only reads the repository.
+permissions:
+  contents: read
+
+# A new push to a PR supersedes the run for the previous push.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84 # v6.5.2
         with:
           version: v1.64.8
           install-mode: goinstall
 
+  tidy:
+    name: Tidy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: go.mod and go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
   proto:
     name: Proto
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
       - name: Install buf and plugins
         run: |
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
           go install github.com/bufbuild/buf/cmd/buf@v1.50.0
       - name: Lint, regenerate, check for drift
@@ -40,20 +68,41 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
       - name: Build (static)
         run: CGO_ENABLED=0 go build ./...
+      - name: GoReleaser config is valid
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6.4.0
+        with:
+          version: "~> v2"
+          args: check
+
+  vuln:
+    name: Vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - name: govulncheck (reachable known vulnerabilities in deps and stdlib)
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WT_NO_SKIP: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
       - name: Unit tests
@@ -62,11 +111,18 @@ jobs:
         run: go test ./test/integration/
 
   migrations:
-    name: Migrations
+    name: Migrations (PostgreSQL ${{ matrix.pg }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Spec: PostgreSQL 14+. 14 is the floor (PUBLIC still has CREATE on
+        # schema public there); 16 is the current target.
+        pg: ["14", "16"]
     services:
       postgres:
-        image: timescale/timescaledb:2.17.2-pg16
+        image: timescale/timescaledb:2.17.2-pg${{ matrix.pg }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -79,9 +135,10 @@ jobs:
     env:
       WT_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
       WT_REQUIRE_DB: "1"
+      WT_NO_SKIP: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
       - name: Migration tests
@@ -90,11 +147,16 @@ jobs:
   netns:
     name: Netns
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WT_NO_SKIP: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+      - name: Kernel version
+        run: uname -r
       - name: Allow unprivileged user namespaces (Ubuntu 24.04 restricts them)
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       # The namespace has no network: fetch modules and the toolchain first.
@@ -103,8 +165,6 @@ jobs:
           go mod download
           go build ./...
           go vet -tags netns ./internal/turret/nft/ ./cmd/wt-turret/
-      - name: Kernel version
-        run: uname -r
       - name: Load nf_tables
         run: sudo modprobe nf_tables || true
       - name: nftables netns tests
