@@ -41,7 +41,7 @@ v3.1 got the direction right (scope cut, privilege split, CSR PKI, read-only FIM
 **Simplification:**
 16. **Fewer binaries**: `wt-midbrain` becomes a package inside `wt-core` (it is a feed poller). Shipped binaries: `wt-core`, `wt-sentry`, `wt-turret`, `wt-cli`, plus optional `wt-frontal`. `wt-interceptor` (WAF) is dropped.
 17. **Naming**: biological names are kept as module codenames for documentation and package names; binaries keep functional names (§2.3). Mixed metaphors are no longer a headline item.
-18. **Toolchain**: Go version tracks `go.mod` (currently 1.25), not a hardcoded 1.21.
+18. **Toolchain**: Go version tracks `go.mod` (currently 1.26), not a hardcoded 1.21.
 
 **Operator experience:**
 19. **Web Console (Visual Cortex)** (§3.6): an embedded Svelte SPA served by `wt-core` over WireGuard replaces "Grafana as the dashboard". It covers incidents, fleet, response, approvals and audit, with passkey login and passkey approvals. Grafana becomes optional. A demo stack with an attack simulator (§3.6.4) provides data for development, E2E tests and screenshots.
@@ -96,7 +96,7 @@ WatchTower XDR is a self-hosted, open-source detection and response platform for
 
 | Layer | Technology | Justification |
 |---|---|---|
-| Language | Go (version per `go.mod`, currently 1.25), `CGO_ENABLED=0` | Single static binary, low memory, native concurrency |
+| Language | Go (version per `go.mod`, currently 1.26), `CGO_ENABLED=0` | Single static binary, low memory, native concurrency |
 | Remote IPC | gRPC + Protobuf (`pkg/synapse`), mTLS | Typed bi-directional streams |
 | Local IPC | Unix domain socket `/run/watchtower/turret.sock` (`0660 root:watchtower`) + `SO_PEERCRED` | Zero network surface for the privileged daemon |
 | Storage | PostgreSQL 14+ / TimescaleDB | Hypertables, compression, retention, ACID |
