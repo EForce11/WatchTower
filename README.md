@@ -11,7 +11,7 @@
   <p align="center">
     <a href="https://github.com/EForce11/WatchTower/actions/workflows/ci.yml"><img src="https://github.com/EForce11/WatchTower/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
     <a href="https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml"><img src="https://github.com/EForce11/WatchTower/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
-    <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-1.25-00ADD8?logo=go" alt="Go Version"></a>
+    <a href="https://go.dev/"><img src="https://img.shields.io/badge/go-1.26-00ADD8?logo=go" alt="Go Version"></a>
     <a href="https://www.gnu.org/licenses/gpl-3.0"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
     <a href="https://github.com/EForce11/WatchTower/releases"><img src="https://img.shields.io/github/v/release/EForce11/WatchTower?include_prereleases" alt="Release"></a>
   </p>
@@ -110,7 +110,7 @@ The prototype's log watcher and pattern matcher are migrated to the v3.2 design 
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| Go | 1.25+ | Build toolchain |
+| Go | 1.26+ | Build toolchain |
 | buf | v1.50.0 | Lint and generate protobuf (`make dev-deps`) |
 | make | Any | Build automation |
 

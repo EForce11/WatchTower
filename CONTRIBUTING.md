@@ -37,7 +37,7 @@ Be respectful. Offensive language, personal attacks, or discriminatory behaviour
 
 | Tool | Version | Notes |
 |------|---------|-------|
-| Go | 1.25+ | [go.dev/dl](https://go.dev/dl/) |
+| Go | 1.26+ | [go.dev/dl](https://go.dev/dl/) |
 | buf | v1.50.0 | Installed with pinned protoc-gen-go plugins by `make dev-deps` |
 | make | Any | GNU Make or compatible |
 | golangci-lint | v1.64.8 | Installed by `make dev-deps` |
